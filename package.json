@@ -1,0 +1,71 @@
+{
+  "name": "orgnauts",
+  "version": "0.2.0",
+  "description": "An AI crew that integrates with Salesforce. Go / No-Go for every change.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KhaddaAiLabs/orgnauts.git"
+  },
+  "homepage": "https://github.com/KhaddaAiLabs/orgnauts#readme",
+  "bugs": {
+    "url": "https://github.com/KhaddaAiLabs/orgnauts/issues"
+  },
+  "keywords": [
+    "salesforce",
+    "claude-code",
+    "agents",
+    "apex",
+    "lwc",
+    "flow",
+    "devops",
+    "multi-agent"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=20.10"
+  },
+  "bin": {
+    "orgnauts": "bin/orgnauts.js",
+    "orgnauts-human": "bin/orgnauts-human.js",
+    "orgnauts-hook": "bin/orgnauts-hook.js",
+    "orgnauts-mcp-evidence": "bin/orgnauts-mcp-evidence.js",
+    "orgnauts-mcp-ui": "bin/orgnauts-mcp-ui.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "schemas",
+    "templates",
+    "src/ui/static"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "test": "npm run build && node scripts/run-tests.mjs",
+    "lint:hardcode": "node scripts/hardcode-lint.mjs",
+    "check:repo": "node scripts/repo-checks.mjs",
+    "hooks:latency": "node scripts/hooks-latency.mjs",
+    "install:toolkit": "node scripts/install-toolkit.mjs",
+    "verify": "npm run build && node scripts/run-tests.mjs && node scripts/hardcode-lint.mjs && node scripts/repo-checks.mjs && node scripts/hooks-latency.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "yaml": "2.9.0",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "typescript": "5.9.3"
+  },
+  "peerDependencies": {
+    "playwright": ">=1.50"
+  },
+  "peerDependenciesMeta": {
+    "playwright": {
+      "optional": true
+    }
+  }
+}

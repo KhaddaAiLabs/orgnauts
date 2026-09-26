@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "version",
+    "per_ticket",
+    "daily_usd",
+    "on_exceed",
+    "pipeline_max_budget_usd"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "per_ticket": {
+      "type": "object",
+      "required": [
+        "tokens",
+        "usd",
+        "wall_minutes"
+      ],
+      "properties": {
+        "tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "usd": {
+          "type": "number"
+        },
+        "wall_minutes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "daily_usd": {
+      "type": "number"
+    },
+    "on_exceed": {
+      "const": "park"
+    },
+    "pipeline_max_budget_usd": {
+      "type": "number"
+    },
+    "prices": {
+      "type": "object",
+      "description": "D-094: USD per 1,000,000 tokens by model-family key. metrics/prices.json overrides.",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "input",
+          "output"
+        ],
+        "properties": {
+          "input": {
+            "type": "number",
+            "minimum": 0
+          },
+          "output": {
+            "type": "number",
+            "minimum": 0
+          },
+          "cache_read": {
+            "type": "number",
+            "minimum": 0
+          },
+          "cache_write": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "title": "config/budgets.yaml"
+}

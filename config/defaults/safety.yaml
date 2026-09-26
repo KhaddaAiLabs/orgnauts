@@ -1,0 +1,34 @@
+# config/safety.yaml — P9 zero real email + test-data hygiene. The email-guard gate scans every test-data payload against this.
+version: 1
+allowed_test_emails:                 # glob-style; ONLY these may appear in test data / scripts / Apex test setup
+  - "*@example.com"
+  - "*@example.org"
+  - "*.invalid"
+  - "*@orgnauts.invalid"
+refuse_field_types:                  # prod fields of these types are NEVER copied into evidence, even if allowlisted
+  - Email
+  - Phone
+require_canary_before_data_stages: true
+canary_max_age_minutes: 30           # canary must be fresher than this before A2/A5/preprod data steps
+canary_recipient_env: ORGNAUTS_CANARY_EMAIL   # your own address for the canary send (env var, not config)
+test_tag_field: Test_Tag__c          # custom text field holding "[ORGNAUTS PROJ-123]" on every test record
+test_tag_prefix: "[ORGNAUTS"
+# D-102 — how outbound e-mail from the development sandbox is contained (edit in the UI → Safety screen):
+#   blocked         (default) the canary must prove the org REFUSES to send (Deliverability = System email only / No access).
+#                   Safe whatever records the sandbox holds — use it for Partial/Full Copy sandboxes with real data.
+#   allowlist_only  delivery may be ON because some tests need a real mail to arrive. The canary then also runs an e-mail
+#                   CENSUS: every address in email_census_fields must match allowed_test_emails, or the canary FAILS and
+#                   every data step is refused. Use it only for a sandbox whose records your team created itself.
+email_delivery: blocked
+email_census_fields:                 # Object.Field pairs the census counts (allowlist_only mode)
+  - Contact.Email
+  - Lead.Email
+  - User.Email
+  - Case.SuppliedEmail
+ui:
+  prod_refuse: true                  # orgnauts-ui (Playwright) refuses production hosts — hard
+  deny_url_patterns:
+    - "/lightning/setup/*"
+    - "/setup/*"
+    - "/_ui/system/*"
+  uat_test_user_only: true           # preprod UI runs only as the least-privilege test user
