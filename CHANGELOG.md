@@ -65,6 +65,13 @@ safety model changed direction; everything about *using* it got simpler.
   via `FlowDefinition.activeVersionNumber`, not a deployed `Obsolete` status; `WITH USER_MODE` over
   `WITH SECURITY_ENFORCED`. New checklists: deployment, limits, sharing, test data.
 
+### Documentation rewritten for a first-time reader
+- The README is now a ten-minute tour with diagrams: what it is, how a ticket flows, the team, what you get per ticket,
+  setup, daily use, where things live, safety. New `docs/README.md` (reading order by role) and `docs/FILE-GUIDE.md`
+  (every folder and important file: who writes it, who reads it, when). SETUP, RUNBOOK, AGENTS and ARCHITECTURE were
+  rewritten or given overview diagrams; every folder that matters has a short README (`.claude/`, `config/`, `inbox/`,
+  `knowledge/`, `org/`, `schemas/`, `scripts/`, `src/`, `templates/`, `test/`, `tests-ui/`).
+
 ## v0.2.0 — 2026-09-26
 
 First public release: conductor + 11 specialists, 19-stage state machine, 16 gates, hooks as enforcement, two

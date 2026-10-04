@@ -1,5 +1,51 @@
 # Orgnauts — Architecture
 
+This page is for the person who wants to know how it works inside. If you only want to use it, read [RUNBOOK.md](RUNBOOK.md). If you want to know what every file is for, read [FILE-GUIDE.md](FILE-GUIDE.md).
+
+## 0. The whole thing in one picture
+
+```mermaid
+flowchart TB
+  subgraph Human[Human]
+    H[You: /ticket · /approve · deploy · lessons]
+  end
+
+  subgraph Claude[Claude Code layer — judgement]
+    CO[conductor<br/>main thread]
+    SP[specialists a0…a9<br/>subagents, least-privilege tools]
+    SK[skills · rules · commands<br/>CLAUDE.md]
+  end
+
+  subgraph Toolkit[Toolkit — deterministic, no AI]
+    SM[state machine<br/>19 stages]
+    GA[gates<br/>schema · lint · tests · hashes]
+    HK[hooks<br/>deny rules, fail closed]
+    EN[engines<br/>lifecycle · baseline · visual · learn …]
+    MCPE[evidence MCP<br/>masked prod reads]
+    MCPU[ui MCP<br/>fenced browser]
+    UI[local web UI]
+  end
+
+  subgraph Orgs[Salesforce]
+    DEV[(Dev sandbox)]
+    UAT[(Preprod)]
+    PROD[(Production)]
+  end
+
+  H --> CO
+  CO -->|Agent tool, one at a time| SP
+  CO <-->|orgnauts agent handoff| SM
+  SP -->|Edit / Write| FS[org/force-app · work/KEY]
+  SP -->|mcp sf-dev| DEV
+  SP --> MCPE --> PROD
+  SP --> MCPU --> DEV
+  EN -->|engine keychain| UAT
+  HK -. PreToolUse / SubagentStop / Stop .-> CO
+  HK -. enforce .-> SP
+  GA -. run by the SubagentStop hook .-> SP
+  H --> UI
+```
+
 ## 1. Three parts, three responsibilities
 
 | Part | Decides | Never decides |
@@ -8,11 +54,21 @@
 | **Toolkit** (`src/` → `orgnauts`, `orgnauts-human`, `orgnauts-hook`, MCP servers, UI) | state machine, gates, keychains, masking, baseline sync, rewards, approvals bookkeeping | anything that needs judgement about Salesforce |
 | **Human** | approvals at gates, deploys, remediation, lesson approval, org/model/budget config | nothing is done *for* the human that they did not ask for |
 
-The conductor runs on the main thread (`claude --agent conductor`) and calls `orgnauts agent handoff <KEY>` in a loop.
-The toolkit answers with exactly one action (SPAWN / WAIT_AGENT / WAIT_HUMAN / RUN_TOOLKIT / HOLD / ESCALATED / PARKED /
-FAILED / DONE) and, for SPAWN, the rendered prompt for exactly one subagent. Hooks make everything else impossible.
-Every Agent call is **foreground**: the stage gates run when the subagent stops, so a background spawn would end the
-conductor's turn before the stage could be judged — the agent-gate hook denies it (D-093).
+The conductor runs on the main thread (`claude --agent conductor`) and calls `orgnauts agent handoff <KEY>` in a loop. The toolkit answers with exactly one action (SPAWN / WAIT_AGENT / WAIT_HUMAN / RUN_TOOLKIT / HOLD / ESCALATED / PARKED / FAILED / DONE) and, for SPAWN, the rendered prompt for exactly one subagent. Hooks make everything else impossible. Every Agent call is **foreground**: the stage gates run when the subagent stops, so a background spawn would end the conductor's turn before the stage could be judged; the agent-gate hook denies it (D-093).
+
+### Map of the code
+
+| Folder | Role | Start reading at |
+|---|---|---|
+| `src/core/` | the facts: stages, manifest, config layers, events, every `sf` call | `state-machine.ts`, `config.ts` |
+| `src/cli/` | the two command surfaces | `agent.ts` (agents may run), `human.ts` (only you) |
+| `src/hooks/` | the deny rules and the stage gate runner | `fast.ts` (zero dependencies), `heavy.ts` |
+| `src/gates/` | the mechanical checks, one function each | `registry.ts` |
+| `src/engines/` | the work behind each verb | `lifecycle.ts`, `baseline.ts`, `visual.ts` |
+| `src/privileged/` | steps that touch orgs with care (canary, deploy-dev, validate, tests, parity) | `index.ts` |
+| `src/mcp/` | the two MCP servers | `evidence-server.ts`, `ui-server.ts` |
+| `src/ui/` | the local web UI | `server.ts` |
+| `src/doctor/` | the health checks | `index.ts` |
 
 ## 2. Stage machine (`src/core/state-machine.ts`)
 

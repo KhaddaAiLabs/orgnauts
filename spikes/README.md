@@ -1,4 +1,4 @@
-# spikes — Phase 0 (≈3½ days) — run BEFORE the first real ticket
+# spikes/ — short experiments to run once against YOUR orgs, before the first real ticket (about 3½ days in total)
 
 Each folder has a `run.sh` (or a checklist) and a `FINDINGS.template.md`. Copy the template to `findings-<date>.md`
 (gitignored), fill it in honestly, then record the decision in `docs/DECISIONS.md`. Everything marked **[U]** in the
