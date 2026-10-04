@@ -13,10 +13,11 @@ import { contractCheck, checklistGate, riskFloor } from "./contract.js";
 import { planLint, semanticCheck } from "./grounding.js";
 import { emailGuard, namingLint, commentLint, commsLint, securityGate, testQuality } from "./hygiene.js";
 import { baselineCheck, deployReport, analyzerGate, assertionReferee, uatParityGate } from "./verdicts.js";
+import { ticketImportGate, visualCheck } from "./vault.js";
 import type { Gate, GateContext, GateOutcome } from "./types.js";
 
 export const GATES: Record<string, Gate> = Object.fromEntries(
-  [contractCheck, checklistGate, riskFloor, planLint, semanticCheck, emailGuard, namingLint, commentLint, commsLint, securityGate, testQuality, baselineCheck, deployReport, analyzerGate, assertionReferee, uatParityGate].map((g) => [g.name, g]),
+  [contractCheck, checklistGate, riskFloor, planLint, semanticCheck, emailGuard, namingLint, commentLint, commsLint, securityGate, testQuality, baselineCheck, deployReport, analyzerGate, assertionReferee, uatParityGate, ticketImportGate, visualCheck].map((g) => [g.name, g]),
 );
 
 export function gateNames(): string[] {

@@ -38,6 +38,10 @@ export interface CompiledPolicy {
   engine_home: string;
   canary_max_age_minutes: number;
   require_canary: boolean;
+  /** D-105: the tracker's MCP server (tools are mcp__<server>__<tool>); only `tracker_read_tools` may be called, anything else on that server is denied. */
+  tracker_mcp_server: string;
+  tracker_read_tools: string[];
+  tracker_write_re: string;
 }
 
 export const DEFAULT_POLICY: CompiledPolicy = {
@@ -48,11 +52,14 @@ export const DEFAULT_POLICY: CompiledPolicy = {
   evidence_aliases: ["production", "prod"],
   alias_map: {},
   bluecanvas_patterns: ["bluecanvas", "blue-canvas"],
-  protected_paths: ["src/", "bin/", "dist/", ".claude/settings.json", ".claude/agents/", ".claude/skills/", ".claude/rules/", ".claude/commands/", ".claude-plugin/", ".mcp.json", "CLAUDE.md", "config/", "knowledge/", "templates/", "schemas/", "docs/", ".orgnauts/", "scripts/", "package.json", ".github/"],
+  protected_paths: ["src/", "bin/", "dist/", "node_modules/", ".claude/settings.json", ".claude/settings.local.json", ".claude/agents/", ".claude/skills/", ".claude/rules/", ".claude/commands/", ".claude-plugin/", ".mcp.json", "CLAUDE.md", "config/", "knowledge/", "templates/", "schemas/", "docs/", ".orgnauts/", "scripts/", "package.json", "package-lock.json", "tsconfig.json", ".gitignore", ".forceignore", "org/sfdx-project.json", "org/.forceignore", "tests-ui/auth.setup.ts", "tests-ui/playwright.config.ts", ".github/"],
   agent_write_areas: ["org/force-app/", "tests-ui/", "work/", "inbox/", "spikes/", ".claude/agent-memory/"],
   engine_home: path.join(os.homedir(), ".orgnauts", "engine"),
   canary_max_age_minutes: 30,
   require_canary: true,
+  tracker_mcp_server: "atlassian",
+  tracker_read_tools: ["getJiraIssue", "searchJiraIssuesUsingJql", "getJiraIssueRemoteIssueLinks", "getVisibleJiraProjects", "atlassianUserInfo"],
+  tracker_write_re: "^(add|edit|create|transition|update|delete|remove|assign|move|archive|post|send|publish|upload|set|put|patch|link|unlink|comment|worklog)",
 };
 
 export function readStdinJson(): HookInput {
@@ -186,7 +193,9 @@ export function decideAgentGate(input: HookInput, root: string): Decision {
 
 export function normalizeCommand(raw: string): string {
   let s = raw.replace(/\s+/g, " ").trim();
-  s = s.replace(/\bsfdx\b/g, "sf").replace(/\bforce:/g, "").replace(/\bsf ([a-z]+):([a-z]+)(?::([a-z]+))?/g, (_m, a, b, c) => `sf ${a} ${b}${c ? " " + c : ""}`);
+  // `sfdx` → `sf` only where it is the COMMAND (start of a piece or after a path/wrapper), never inside a file name such as
+  // sfdx-project.json (v0.3.0: that rewrite hid the protected path org/sfdx-project.json from R6)
+  s = s.replace(/(^|[\s;&|(="'`]|\/)sfdx(?=\s)/g, "$1sf").replace(/\bforce:/g, "").replace(/\bsf ([a-z]+):([a-z]+)(?::([a-z]+))?/g, (_m, a, b, c) => `sf ${a} ${b}${c ? " " + c : ""}`);
   s = s.replace(/\bsf data soql query\b/g, "sf data query").replace(/\bsf apex test run\b/g, "sf apex run test");
   return s;
 }
@@ -215,8 +224,10 @@ export function decidePolicy(input: HookInput, root: string, policy: CompiledPol
   const full = normalizeCommand(raw);
   const lower = full.toLowerCase();
 
-  // R1 — human-only verbs
+  // R1 — human-only verbs, by NAME and by PATH (v0.3.0 hardening: `node dist/cli/human.js approve …` is the same verb)
   if (/\borgnauts-human\b/.test(lower) || /\borgnauts(?:\.js)?\s+human\b/.test(lower)) return deny("orgnauts-human is for the human operator only; agents use `orgnauts agent …`", "R1-human-verbs");
+  if (/(^|[\s/"'=])(dist|src)\/cli\/human(\.js|\.ts)?\b/.test(lower) || /\bhuman\.js\b/.test(lower)) return deny("the human-only CLI may not be run through its file path either", "R1-human-verbs");
+  if (/(dist|src)\/hooks\/dispatch(\.js|\.ts)?\b|\borgnauts-hook\b/.test(lower)) return deny("agents never invoke the hooks themselves — approvals and gate results come only from the human and the toolkit", "R1-hook-direct");
   // R2 — keychain / env redirection
   if (/(?:^|[\s;&|])HOME=|\bUSERPROFILE=|\bexport HOME\b|\bunset HOME\b/.test(full)) return deny("changing HOME would switch sf keychains", "R2-home-override");
   if (/(?:^|[\s;&|])(SF_[A-Z_]+|SFDX_[A-Z_]+)=|\bexport (SF_|SFDX_)/.test(full)) return deny("SF_*/SFDX_* env overrides are not allowed for agents", "R2-sf-env");
@@ -233,8 +244,20 @@ export function decidePolicy(input: HookInput, root: string, policy: CompiledPol
   // R5 — direct Salesforce HTTP (bypasses masking/keychains)
   if (/\b(curl|wget|http|httpie|xh)\b/.test(lower) && /(salesforce\.com|force\.com|cloudforce\.com|visualforce\.com|lightning\.force)/.test(lower)) return deny("direct HTTP to Salesforce bypasses masking and keychains — use MCP tools or orgnauts agent evidence", "R5-direct-http");
 
-  for (const part of splitCompound(full)) {
-    const p = part.toLowerCase();
+  // R7w (whole command) — an inline interpreter that mentions `sf` as a word: splitCompound cuts on `;` inside the quoted
+  // program, so this must be judged on the full string (python3 -c "import subprocess; subprocess.run(['sf', …])")
+  if (/(^|[\s;&|(])(node\s+-e|python3?\s+-c|perl\s+-e|ruby\s+-e)\b/.test(lower) && /(^|[\s"'`(,\[])sf(?=[\s"'`,)\]])/.test(lower)) return deny("run sf directly (`sf … -o <dev alias>`), not from an inline node/python/perl/ruby program (a wrapper) — wrapped commands cannot be judged", "R7-wrapped-sf");
+  // v0.3.0 hardening: an absolute path into this repository is the same path as its relative form
+  const rootLower = root.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase();
+  for (const partRaw of splitCompound(full)) {
+    const part = rootLower && partRaw.toLowerCase().includes(rootLower + "/") ? partRaw.replace(new RegExp(rootLower.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "/", "gi"), "./") : partRaw;
+    const p = part.toLowerCase().replace(/\$\{?pwd\}?\//g, "./");
+    // R2c — `VAR=x sf …` (incl. ORGNAUTS_HOOKS_OFF=1 sf …): an env prefix hides the command from the sf rules below
+    if (/^(?:[a-z_][a-z0-9_]*=\S*\s+)+(?:\S*\/)?sf\b/.test(p)) return deny("environment prefixes in front of sf are not allowed for agents — run `sf … -o <dev alias>` plainly", "R2-env-prefix");
+    // R7w — sf reached through a wrapper, an absolute path or npx: the target cannot be judged, so the form is denied
+    if (!/^sf\b/.test(p) && !/^orgnauts\s+agent\b/.test(p) && (/(^|[\s;&|(="'`])(?:\S*\/)?sf\s/.test(p) && /(^|[\s;&|(="'`$])(bash|sh|zsh|dash|ksh|eval|exec|command|env|time|nohup|xargs|npx|node|python3?|perl|ruby|sudo|timeout|nice|caffeinate)\b/.test(p) || /(^|[\s;&|(="'`])\S+\/sf\s/.test(p) || /\bnpx\s+(?:-y\s+)?(?:@salesforce\/cli|sf|sfdx)\b/.test(p) || /\$\(\s*which\s+sf\s*\)/.test(p) || (/(^|[\s;&|(])(node\s+-e|python3?\s+-c|perl\s+-e|ruby\s+-e)\b/.test(p) && /(^|[\s"'`(,\[])sf(?=[\s"'`,)\]])/.test(p)))) {
+      return deny("run sf directly (`sf … -o <dev alias>`), not through a wrapper, an absolute path or npx — wrapped commands cannot be judged", "R7-wrapped-sf");
+    }
     // R6 — protected paths via shell writes
     // a "read-only" command with a redirection (echo x > file, cat a >> b) or tee is a write
     const isReadOnly = READONLY_CMDS.test(p) && !/(^|[^>])>{1,2}(?!&)\s*\S|\btee\b/.test(p);
@@ -261,7 +284,7 @@ export function decidePolicy(input: HookInput, root: string, policy: CompiledPol
       // Any explicit target that is not a configured development alias is denied — reads included. The human's own keychain may
       // hold other sandboxes or an admin production login under an arbitrary alias or a bare username; agents never touch those.
       if (t && !isDev) return deny(`target "${tRaw}" is not a configured development org (${policy.dev_aliases.join(", ")}) — agents run sf only against the development org by its alias; preprod goes through \`orgnauts agent privileged …\`, production through \`orgnauts agent evidence …\``, "R7-non-dev-target");
-      if (/^sf (data query|data export|apex run|project deploy|project retrieve)\b/.test(p) && !t) return deny("name the development org explicitly (-o <dev alias>) — the default target-org is not trusted", "R7-no-target");
+      if (/^sf (data query|data export|apex run|project deploy|project retrieve|api request)\b/.test(p) && !t) return deny("name the development org explicitly (-o <dev alias>) — the default target-org is not trusted", "R7-no-target");
       if (WRITE_VERBS.test(p) && !/^sf data query\b/.test(p)) {
         if (/^sf (project deploy|project delete|data (create|update|delete|upsert|import|bulk|tree import)|apex run(?! test)|org (create|delete))/.test(p) && !t) return deny("write-type sf command without an explicit --target-org — always name the development org", "R7-no-target");
       }
@@ -374,5 +397,30 @@ export function decideDataGuard(input: HookInput, root: string, policy: Compiled
   if (best.result !== "pass") return deny(`last canary on ${best.org} was ${best.result.toUpperCase()}: ${best.detail}`);
   const ageMin = (Date.now() - new Date(best.at).getTime()) / 60_000;
   if (ageMin > policy.canary_max_age_minutes) return deny(`canary on ${best.org} is ${Math.round(ageMin)} min old (max ${policy.canary_max_age_minutes})`);
+  return { allow: true };
+}
+
+/* ============================ tracker-guard (D-105: tracker MCP is read-only for agents) ============================ */
+
+/**
+ * Tools are named mcp__<server>__<tool>. For the configured tracker server only the listed READ tools may be called;
+ * every other tool on that server — and any tool whose name looks like a write — is denied. Other MCP servers are not
+ * this hook's business (sf-dev has data-guard, orgnauts-* are the toolkit's own).
+ */
+export function decideTrackerGuard(input: HookInput, root: string, policy: CompiledPolicy): Decision {
+  const tool = String(input.tool_name ?? "");
+  const m = /^mcp__([^_]+(?:_[^_]+)*?)__(.+)$/.exec(tool);
+  if (!m) return { allow: true };
+  const [, server, name] = m;
+  if (server === "sf-dev" || server.startsWith("orgnauts")) return { allow: true };
+  if (server.toLowerCase() !== policy.tracker_mcp_server.toLowerCase()) return { allow: true };
+  const ticket = ticketForSession(root, input.session_id);
+  const deny = (why: string): Decision => {
+    appendEvent(root, ticket, "policy.denied", { rule: "T1-tracker-readonly", tool }, input.agent_type);
+    return { deny: `${why} [rule T1-tracker-readonly]` };
+  };
+  const readTools = policy.tracker_read_tools.map((t) => t.toLowerCase());
+  if (new RegExp(policy.tracker_write_re, "i").test(name)) return deny(`"${name}" writes to the tracker — Orgnauts never posts, edits, transitions or comments; drafts are files for the human to paste`);
+  if (!readTools.includes(name.toLowerCase())) return deny(`"${name}" is not one of the tracker READ tools agents may use (${policy.tracker_read_tools.join(", ")}) — config/tracker.yaml → mcp.read_tools`);
   return { allow: true };
 }

@@ -1,5 +1,12 @@
 # 03 — Plan · <KEY> — <title>
 
+<!-- Visual (D-107): the toolkit renders `03-plan.json → visual` to {{VISUAL}} (work/<KEY>/visuals/plan.html): "1 · Root cause (what
+     breaks today)" · "2 · The fix, step by step" · "3 · One real example" · open questions · glossary. Write it for a non-developer.
+     JSON-contract reminder — `visual` keys: issue {headline, steps[] (≥2), where_it_breaks} · fix {headline, steps[] (≥1)} = THE FIX,
+     STEP BY STEP · example {record, today, expected} · mermaid {issue, fix} (each starts with flowchart/graph/sequenceDiagram/stateDiagram,
+     ≥ 2 connected nodes, every box a real component) · glossary[] {term, meaning} · open_questions[].
+     Self-check: `orgnauts agent visual <KEY> --stage plan`; the `visual-check` gate runs the same check. -->
+
 ## 1. Root cause
 Mechanism … · Evidence: 02-repro.md, evidence/… · Confidence: xx%
 
@@ -51,6 +58,14 @@ needed: yes/no — … · verification SOQL: …
 
 ## Unknowns & questions for the human
 - …
+
+## Grounding table (every platform claim this plan relies on)
+<!-- Source = knowledge/mirror/<file>:<line> or knowledge/curated/<file>:<line>. No line → `unverified`, and the claim also appears
+     under Unknowns with the cheapest way to settle it. -->
+| Claim | Source | Note |
+|---|---|---|
+| before-save flows run before before triggers | knowledge/mirror/…:… | |
+| … | unverified | also in Unknowns |
 
 ## Checklist answers
 | Item | Answer | Note |

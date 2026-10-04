@@ -7,58 +7,107 @@
 [![node ≥ 20.10](https://img.shields.io/badge/node-%E2%89%A5%2020.10-339933.svg)](package.json)
 [![runs inside Claude Code](https://img.shields.io/badge/runs%20inside-Claude%20Code-1f2937.svg)](docs/SETUP.md)
 
-Orgnauts turns one Claude Code session into a disciplined Salesforce crew: an intake analyst, a reproduction
-engineer, an architect, a developer, a QA engineer, a reviewer, a comms writer and a coach — each a Claude Code
-subagent with a single job and least-privilege tools — coordinated by a conductor that follows a deterministic
-toolkit instead of its own judgement. Every stage ends in a **Go / No-Go** decision taken by mechanical gates, not by
-the model's opinion; every risky step waits for **you**.
+Orgnauts turns one Claude Code session into a Salesforce team: an intake analyst reads your ticket, a reproduction engineer
+proves the bug with a failing test, an architect plans, a developer builds in **your development sandbox only**, a QA engineer
+tests, a reviewer signs off and a comms writer drafts the words — each a Claude Code subagent with one job and the fewest
+tools possible, walked through 19 fixed stages by a conductor. Every stage ends in a **Go / No-Go** taken by mechanical gates
+(tests, lints, hash comparisons), never by the model's opinion, and every risky step waits for **you**. Production is read-only,
+deploys are yours, and no real e-mail can leave a sandbox.
 
-```
-/ticket PROJ-123
-   → prior art → intake → baseline sync (preprod → dev) → org map → REPRODUCE (failing test)
-   → plan (every API name verified) → develop (dev sandbox only) → QA → review + deploy brief + deploy manifest → comms drafts
-   → you deploy (your release tool) → PARITY CHECK (did everything arrive?) → QA in preprod
-   → you deploy to production → read-only verify → coach retro
-```
+## Prerequisites
 
-## What makes it different from "an AI that writes Apex"
+| You need | Why | Check |
+|---|---|---|
+| Node.js ≥ 20.10 | runs the toolkit | `node --version` |
+| Salesforce CLI (`sf`) | every org call goes through it | `sf --version` · install: `npm i -g @salesforce/cli` |
+| git | the toolkit reads your repo history and remotes | `git --version` |
+| Claude Code (`claude`) | the agents run inside it | `claude --version` |
+| A tracker — **one** of: the Atlassian (Jira) MCP server connected in Claude Code · any other tracker with an MCP server · no tracker at all (tickets as files in `inbox/`) | the intake agent reads the ticket; Orgnauts never holds a tracker token | `claude mcp list` |
+| One development sandbox you are allowed to break | the only org agents write to | `sf org list` |
 
-| | Orgnauts |
-|---|---|
-| **Production** | Read-only, always. One masked, logged evidence channel (`orgnauts-evidence` MCP) through a least-privilege user. No agent has a production login, deploy path or write tool. |
-| **Preprod** | Reachable only by the toolkit's *engine* keychain (a separate `HOME`), never by an agent. Baseline sync copies preprod → dev before work starts, so fixes are built against reality. |
-| **Proof before fix** | Nothing is fixed until a test **fails** on the bug (and an inverse test passes). The referee is a run file, not prose. |
-| **Zero hallucinated names** | Plans are linted against describe/metadata caches of *your* org: an API name that does not exist fails the stage. |
-| **Zero real email** | You keep the list of allowed test addresses in the UI (⛨ Safety). Every artifact is scanned against it; a canary probe proves the sandbox refuses to send — or, when a test needs real delivery, an e-mail **census** proves no address outside the list exists in the org. |
-| **Your style** | Comments match the existing codebase format; names describe behaviour, never ticket numbers. |
-| **Humans decide** | Tier-based gates (LOW/MEDIUM/HIGH), per-agent ask/auto, typed approvals on HIGH plans, deploys always human. Approvals are recorded by a prompt hook only *you* can trigger. |
-| **Deploys are verified** | The reviewer hands you the exact component list from git (`06c-deploy-manifest.md`, `package.xml`); after you deploy to preprod the toolkit retrieves the same components and compares fingerprints before QA runs there. |
-| **Official knowledge only** | Agents cannot browse. Platform facts come from a mirror of Salesforce's own documentation and from notes a human filed with author and source. |
-| **Learns from evidence** | A reward ledger computed from events (gate results, denials, escalations, your decisions) → lesson candidates → you approve → injected into the right agent as a skill. Agents' own notes are quarantined until confirmed. |
-| **Nothing hard-coded** | Orgs, tracker, emails, names, models, budgets live in `config/*.yaml` (schema-validated; tracked defaults in `config/defaults/`, your copies gitignored). Clone, run `setup`, add your orgs — `git status` stays clean. |
+`orgnauts-human doctor --preflight` prints this table for your machine (setup runs it before its first question). Optional:
+python3 (Phase 0 spikes) and Playwright (browser QA in preprod). macOS and Linux only — Windows is not supported (sh launchers,
+`HOME` override).
 
-## Quick start (macOS / Linux)
+## Quick start — 15 minutes
 
 ```bash
 git clone https://github.com/KhaddaAiLabs/orgnauts.git && cd orgnauts
-npm ci && npm run build && npm test           # 96 offline tests: state machine, gates, hooks, lifecycle, UI, MCP, scripts, config layers, hard rules
-npm run install:toolkit                       # installs ~/.orgnauts/bin (hooks call this copy, never the repo)
-export PATH="$HOME/.orgnauts/bin:$PATH"
+npm run setup                                   # npm ci → build → ~/.orgnauts/bin (the copy the hooks run) → 5-question wizard
+export PATH="$HOME/.orgnauts/bin:$PATH"         # add it to your shell profile too
 
-orgnauts-human setup                          # wizard → config/orgs.yaml, tracker, emails, models
-orgnauts-human org login --alias DevSandbox --keychain agent      # dev sandbox (read-write)
-orgnauts-human org login --alias Production --keychain agent      # as the READ-ONLY evidence user (docs/SETUP.md §3)
-orgnauts-human org login --alias UAT        --keychain engine     # preprod, engine keychain only
-orgnauts-human sync && orgnauts-human doctor  # generated files + boot conditions must be green
+orgnauts-human org login --alias DevSandbox --keychain agent    # browser login to YOUR development sandbox
+export ORGNAUTS_CANARY_EMAIL=you@yourcompany.example           # the e-mail canary's only recipient: your own address
+orgnauts-human doctor                                           # boot checks: config · keychain · hooks · tracker · canary
 
-# in Claude Code, once:  /plugin marketplace add ./  →  /plugin install salesforce-development@orgnauts-pinned
-orgnauts-human start                          # conductor session → /ticket PROJ-123
-orgnauts-human ui                             # local control room (127.0.0.1 + token): dashboard, tickets, agents/models, orgs, SAFETY (e-mails), lessons, config
+# in Claude Code, once (type the whole line — `/plugin` alone opens the interactive manager):
+#   /plugin marketplace add ./
+#   /plugin install salesforce-development@orgnauts-pinned
+
+orgnauts-human start                            # launches the conductor session
+> /ticket PROJ-123
 ```
 
-No Jira yet? Set `tracker.adapter: file` and drop `inbox/DEMO-101.md` (template in `templates/inbox-ticket.md`).
+The wizard asks five things: the **development sandbox alias**, your **tracker project key**, the **test e-mail patterns**
+that may appear in test data (`*@example.com, *.invalid` — add your own address pattern), the **tracker** (`mcp`, the default:
+tickets are read through the MCP server you name, `atlassian` by default; or `jira` with a REST token; or `file`) and a
+**preprod alias** (default `none` — a development-sandbox-only start is fine). No tracker? Choose `file` and drop
+`inbox/PROJ-123.md` (template: `templates/inbox-ticket.md`). Preprod, the production read-only user and the full wizard:
+**[docs/SETUP.md](docs/SETUP.md)**.
 
-Full setup, including creating the production read-only user and the Phase 0 spikes: **[docs/SETUP.md](docs/SETUP.md)**.
+## How a ticket flows
+
+```
+open → prior art → intake → baseline sync → cartography → reproduce → plan → develop → QA (dev) → review → comms
+  → deploy to preprod (you) → preprod parity → QA (preprod) → deploy to production (you) → production verify
+  → remediation (you, only if the plan has one) → score + learn → done
+```
+
+Nineteen stages, one conductor. **Your steps:** approve the intake and the plan when a gate asks (`/approve PROJ-123`,
+`/reject PROJ-123 --reason "…"`), deploy to preprod and to production with **your own release tool** using the component list
+in `work/PROJ-123/06c-deploy-manifest.md`, then tell the toolkit (`orgnauts-human deployed PROJ-123 --org preprod`); after a
+preprod deploy the toolkit retrieves the same components and compares fingerprints before QA runs there. When the conductor
+stops, `orgnauts agent status PROJ-123` says why and `orgnauts-human ui` shows it. **Pictures:** the intake and the plan each
+render a page you can open in a browser — `work/PROJ-123/visuals/intake.html` (the issue, what to do, one example, two
+diagrams) and `work/PROJ-123/visuals/plan.html`.
+
+## Your controls
+
+- **Per-agent approval switch** — `orgnauts-human autonomy set <agent> ask|auto|inherit`: stop for `/approve` after this agent,
+  never stop, or follow the tier matrix in `config/autonomy.yaml`. `orgnauts-human autonomy show` prints the current matrix.
+  Deploys and remediation are always yours (hard floor).
+- **Which org the baseline comes from** — with several preprod orgs, answer the baseline question with the alias:
+  `/approve PROJ-123 --stage baseline --answer "source:UAT"` (or `orgnauts-human baseline decide PROJ-123 --source UAT`). The
+  toolkit copies that org's version of each component into the dev sandbox before work starts and tells you when a refresh is needed.
+- **Safety screen** — `orgnauts-human ui` → ⛨ Safety: the allowed test e-mail patterns, the e-mail containment mode (`blocked` /
+  `allowlist_only`) and the canary state. The same values live in `config/safety.yaml`.
+- `/hold`, `/resume`, `/feedback "lesson"`, `orgnauts-human lessons review` — the human side of learning.
+
+## What is new in v0.3.0
+
+- **Tracker through MCP, no Jira token.** `tracker.adapter: mcp` (the default): the intake agent reads the ticket with the
+  tracker's own Claude Code MCP server (Atlassian by default — any tracker with an MCP server works) and imports it into the vault.
+  Orgnauts never holds a tracker credential; write tools are denied.
+- **Per-agent approval switch** — `orgnauts-human autonomy set <agent> ask|auto|inherit`.
+- **Intake and plan visuals** — `work/<KEY>/visuals/intake.html` and `plan.html`, rendered from the stage contract and checked by a gate.
+- **Baseline from the org you choose**, with a "refresh needed" check when the baseline is older than the org.
+- **QA in preprod with the browser**, after the toolkit verified that your deploy brought every component (fingerprint parity).
+- **Honest offline test suite** — `npm test` sets `ORGNAUTS_OFFLINE=1`: no `sf` call leaves the suite, nothing pings your keychain;
+  doctor 9h proves it and doctor itself skips org checks loudly instead of silently when offline.
+- **Hardened policy hook** — the PreToolUse deny hook that keeps agents on the development sandbox.
+- **Quick setup** — `npm run setup`, `orgnauts-human setup --quick`, a prerequisites table before the first question
+  (`doctor --preflight`), and doctor 2h (plans are checked against `org/sfdx-project.json` → `sourceApiVersion`; it must match your org).
+
+## Safety in one paragraph
+
+Production is reached by exactly one identity — a **read-only user** you create — through one **masked, logged evidence channel**
+(`orgnauts-evidence` MCP); no agent has a production login, deploy path or write tool, and `orgnauts-human doctor --p1` fails if that
+user can modify data or metadata. Agents deploy to the **development sandbox only**: the policy hook, the generated `.mcp.json` and static deny
+rules refuse every other org, and preprod sits in a separate **engine keychain** (`~/.orgnauts/engine`) agents cannot read.
+**Humans deploy** with their own release tool; the toolkit then checks what arrived. **Zero real e-mail:** only the addresses you
+allow may appear in test data, a canary proves the sandbox refuses to send (or a census proves no other address exists in it),
+and the canary's sole recipient is the address you put in `ORGNAUTS_CANARY_EMAIL`. The long form, rule by rule with the code that
+enforces each one: [docs/SAFETY.md](docs/SAFETY.md).
 
 ## How it is built
 
@@ -75,9 +124,15 @@ flowchart LR
   HK -.enforce.-> A
 ```
 
-- **Claude Code layer** — `.claude/agents/*.md` (12 agents), `.claude/skills/` (rules, methods, generated lessons), `.claude/rules/` (path-scoped), `.claude/commands/`, `.claude/settings.json` (hooks + permissions = enforcement), `CLAUDE.md` (arbitration).
-- **Toolkit** (`src/`, TypeScript, zero-LLM) — `orgnauts agent …` verbs agents may run; `orgnauts-human …` verbs only you run; `orgnauts-hook` (fast deny hooks, stage gates); two MCP servers (`orgnauts-mcp-evidence`, `orgnauts-mcp-ui`); the local UI.
-- **Config** (`config/`) — 14 schema-validated YAML files: tracked defaults in `config/defaults/`, your personal copies beside them (gitignored). **Knowledge** — checklists, guards, lessons, docs mirror. **Templates** — stage prompts and file skeletons. **Schemas** — manifest, config, stage contracts.
+- **Claude Code layer** — `.claude/agents/*.md` (the agents), `.claude/skills/` (rules, methods, generated lessons), `.claude/rules/`
+  (path-scoped), `.claude/commands/`, `.claude/settings.json` (hooks + permissions = enforcement), `CLAUDE.md` (arbitration).
+- **Toolkit** (`src/`, TypeScript, zero-LLM) — `orgnauts agent …` verbs agents may run; `orgnauts-human …` verbs only you run;
+  `orgnauts-hook` (fast deny hooks, stage gates); two MCP servers (`orgnauts-mcp-evidence`, `orgnauts-mcp-ui`); the local UI.
+- **Config** (`config/`) — 14 schema-validated YAML files: tracked defaults in `config/defaults/`, your personal copies beside them
+  (gitignored). **Knowledge** — checklists, guards, lessons, docs mirror. **Templates** — stage prompts and file skeletons.
+  **Schemas** — manifest, config, stage contracts.
+
+`npm run verify` runs the offline test suite, the hardcode lint, the repo checks and the hook latency benchmark — the same steps as CI.
 
 ## Documentation
 
@@ -86,31 +141,12 @@ flowchart LR
 | [docs/SETUP.md](docs/SETUP.md) | how to install, configure your orgs and tracker, and pass the boot checks |
 | [docs/RUNBOOK.md](docs/RUNBOOK.md) | what to do at each human step of a ticket (approve, deploy, mark deployed, review lessons) |
 | [docs/AGENTS.md](docs/AGENTS.md) | who does what — every agent, its inputs, outputs, tools and the gate that judges it |
-| [docs/SAFETY.md](docs/SAFETY.md) | the four rules that can never be skipped, and the code that enforces each one |
+| [docs/SAFETY.md](docs/SAFETY.md) | the rules that can never be skipped, and the code that enforces each one |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | the state machine, gates, hooks, MCP servers, keychains and config layers in depth |
 | [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) | what could go wrong, and why it cannot |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | every design decision, why it was taken, and what it changed |
 | [docs/GLOSSARY.md](docs/GLOSSARY.md) | the words used everywhere else |
 | [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) · [docs/SECURITY.md](docs/SECURITY.md) | how to change things safely, and how to report a vulnerability |
-
-## Status
-
-**v0.2.0 — design implemented, hardened by a pilot, verified offline.** 96 tests (state machine, 16 gates,
-hook denials incl. ~100 red-team production writes, a full ticket lifecycle with rejection, support-agent, bounce and
-preprod-parity paths, UI, MCP servers, config layers, the four hard rules), hardcode-lint and hook latency pass in CI.
-The first live run (a fictional ticket) found three blockers that are now fixed and tested (D-093 foreground
-agents + recovery, D-094 fresh-token budgets + prices, D-095 per-agent reasoning effort); the pilot review added
-D-096–D-103 (org-convention skills wired, canary staleness, enhancement-aware repro, deploy manifest, preprod parity,
-picture sections, e-mail containment modes, trusted knowledge sources). What still needs *your* orgs is listed in
-[docs/SETUP.md → Phase 0 spikes](docs/SETUP.md#phase-0-spikes); the first real ticket end to end is the next milestone
-(see [docs/DECISIONS.md](docs/DECISIONS.md) for the open items).
-
-## Principles (P1–P12)
-
-Production read-only · preprod engine-only · humans deploy · least privilege · evidence or nothing · learn from events
-only · untrusted text is data · gates decide · zero real email · meaningful names in the org's style · honest escalation ·
-no browsing, official sources only.
-The long form lives in `.claude/skills/orgnauts-core-rules/SKILL.md` — every agent has it preloaded.
 
 ## License
 

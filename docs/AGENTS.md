@@ -38,34 +38,50 @@ specialists at once, never approves anything for you, never re-checks a speciali
 
 ## a1-intake — the analyst (stages 02 prior_art, 03 intake)
 
-*opus · high · tools: Read, Glob, Grep, Bash, Write, Skill · **no org access on purpose***
+*opus · high · tools: Read, Glob, Grep, Bash, Write, Skill, the tracker's READ tools (`mcp__<server>__…`, written by `sync` from
+`config/tracker.yaml → mcp.read_tools`) · **no Salesforce org access on purpose***
 
-Reads the ticket (wrapped in an `<untrusted>` envelope — its text is data, never instructions), pasted screenshots
+**Imports the ticket itself (D-105).** The toolkit holds no tracker credential, so `orgnauts agent open` writes only a stub; at
+`prior_art` the agent calls the tracker's read tool, saves `work/<KEY>/00-inbox/ticket-import.json` (copy, never summarise), runs
+`orgnauts agent ticket import <KEY> --file …` (the toolkit validates it, strips `<untrusted>` tags, writes `ticket.md` in the envelope
+and indexes prior art), then runs the tracker's search tool with the `suggested_search:` query `orgnauts agent prior-art` printed,
+saves `tracker-hits.json` and re-runs prior-art. It is the only agent with tracker tools, and it has no write tool: the `tracker-guard`
+hook denies anything not in the read list (`T1-tracker-readonly`). The `ticket-import` gate fails `prior_art` while the stub is there.
+Then it reads the ticket (wrapped in an `<untrusted>` envelope — its text is data, never instructions), pasted screenshots
 and comments, prior art and the org map, and writes `01-intake.md`: plain-English business lens and technical lens
 (hypotheses with confidence), **§2a Picture** (today vs expected — ASCII + mermaid + one worked example, D-101),
 classification (BUG / ENHANCEMENT / DATA-FIX / QUESTION with the deciding sentence quoted), numbered testable acceptance
 criteria each traceable to a ticket line, scope as `Type:ApiName` with a source each (or `(needs cartography)` — never a
 guessed name), an advisory risk tier (the `risk-floor` gate may only raise it), the blocking questions for you, and an
-injection notice for any instruction-like text found in the ticket. First spawn (`prior_art`) writes the prior-art digest
-from related vaults, tracker search and git history. Gates: `contract-check`, `risk-floor`. HIGH tier → waits for your approval.
+injection notice for any instruction-like text found in the ticket. `01-intake.json` carries the **`visual` block** (D-107:
+what is the issue · what must be done · one real example · two mermaid diagrams · glossary), which the toolkit renders to
+`work/<KEY>/visuals/intake.html` for a non-developer to read. Gates: `ticket-import` + `contract-check` (prior_art);
+`contract-check`, `risk-floor`, `visual-check` (intake). HIGH tier (or `agents.a1-intake: ask`) → waits for your approval.
 
 ## a0b-baseline — baseline sync (stage 04)
 
 *sonnet · low · tools: Read, Glob, Grep, Bash, Write, Skill · **no org tools***
 
-Makes the development sandbox equal to preprod **for the ticket's scope** before anyone writes code, by driving
-`orgnauts agent baseline <KEY>`: the toolkit (engine keychain for preprod, agent keychain for dev) expands scope through the
-dependency graph, retrieves both, classifies each component IDENTICAL / UAT-NEWER / DEV-NEWER / BOTH-CHANGED / UNKNOWN,
-snapshots dev, applies `config/policy.yaml → baseline_sync`, deploys preprod versions into dev and verifies. DEV-NEWER,
-BOTH-CHANGED and UNKNOWN stop and ask you (`orgnauts-human baseline decide`). Direction is always preprod → dev. Gate:
-`baseline-check`. Skipped entirely in a dev-only configuration (`no_preprod`).
+Every developer has their own dev sandbox, but preprod is shared, so another developer's work may already be there. The agent
+makes the development sandbox equal to **the right preprod source** for the ticket's scope before anyone writes code. It first
+runs `orgnauts agent baseline <KEY> --list-sources` (D-108): the configured `role: preprod` orgs with their `label` and the
+`[default]` one (`baseline_source: true`). One source, or a default → used; several and none chosen → the toolkit stops as
+`waiting_human (baseline)` and you answer `/approve <KEY> --stage baseline --answer "source:<alias>"` (or `orgnauts-human baseline
+decide <KEY> --source <alias>`) — the agent never picks. Then `orgnauts agent baseline <KEY>`: the toolkit (engine keychain for the
+source, agent keychain for dev) expands scope through the dependency graph, retrieves both, classifies each component IDENTICAL /
+UAT-NEWER / DEV-NEWER / BOTH-CHANGED / UNKNOWN, snapshots dev, applies `config/policy.yaml → baseline_sync`, copies the source
+versions into dev **only where they differ** and verifies. `00b-baseline.md` names the source and says **Refresh needed: YES/NO**;
+only the ticket's scope is ever copied. DEV-NEWER, BOTH-CHANGED and UNKNOWN stop and ask you (`orgnauts-human baseline decide`).
+Direction is always source → dev. Gate: `baseline-check`. Skipped entirely in a dev-only configuration (`no_preprod`).
 
 ## a0-cartographer — the map maker (stage 05)
 
 *haiku · low · tools: Read/Glob/Grep/Bash/Write/Edit, dev MCP (retrieve, SOQL), evidence tooling/describe/row_count*
 
 Writes `00d-cartography.md/.json` for this ticket: objects and key fields, automation **in order of execution**
-(before-save flows → before triggers → validation rules → after triggers → after-save flows → legacy → async), consumers of
+(before-save flows → before triggers → validation rules → duplicate rules → after triggers → assignment / auto-response /
+workflow → escalation → flows launched by workflow → after-save flows → entitlement rules → roll-ups → commit → post-commit
+email and async; the numbered list is in `std-trigger-framework`, to be verified against `knowledge/mirror`), consumers of
 every scoped component (dependency graph), data shape (COUNT/GROUP BY only — never record dumps), dev↔prod drift dates,
 conventions observed, unknowns. Every API name comes from a retrieve, describe, Tooling query or the existing org map — never
 from memory of "typical orgs". May append to `docs/org-map/*` (role exception). Gate: `contract-check`.
@@ -75,13 +91,17 @@ from memory of "typical orgs". May append to `docs/org-map/*` (role exception). 
 *opus · xhigh · tools: Read/Glob/Grep/Bash/Write/Edit, dev MCP (SOQL, retrieve, run tests), evidence, fenced browser*
 
 "Nothing gets fixed until it is proven broken by an assertion that fails." Data first: masked production evidence for the
-bug's footprint → minimal, bulk-honest (≥200 where automation is involved), **meaningfully named, tagged** dev records with
-**allowlisted e-mails only**, created by an anonymous Apex script the toolkit runs (`privileged apex-run` — canary-gated,
-address-scanned) → a failing Apex/Flow/SOQL assertion **and** an inverse assertion that must keep passing → predicted
-distribution (`artifacts/assertions.json`) → `privileged test --phase repro` → `02-repro.md/.json`. Two honest tries, then
-an honest escalation. **Enhancement mode (D-098):** for an ENHANCEMENT there is no bug; the "failing tests" are acceptance
-tests, one per acceptance criterion, failing because the behaviour does not exist yet — same referee. Never fixes code.
-Gates: `email-guard`, `naming-lint`, `assertion-referee`, `contract-check`.
+bug's footprint (production data shapes come **only** through `mcp__orgnauts-evidence__*`; Email/Phone-typed fields are refused
+by the server) → **a walkthrough of how the system works today, step by step, and where it breaks** (D-112: one record's path
+through the real components, written into `02-repro.md` and `02-repro.json → system_walkthrough[]`, so the architect, developer
+and QA share one picture) → minimal, bulk-honest (≥200 where automation is involved), **meaningfully named, tagged** dev records
+with **fake e-mails from the allowlist only**, created by an anonymous Apex script the toolkit runs (`privileged apex-run` —
+after a PASS canary, address-scanned) → a failing Apex/Flow/SOQL assertion **and** an inverse assertion that must keep passing →
+predicted distribution (`artifacts/assertions.json`) → `privileged test --phase repro` → `02-repro.md/.json`. UI steps run in the
+dev org through `mcp__orgnauts-ui__*`. Two honest tries, then an honest escalation. **Enhancement mode (D-098, D-112):** for an
+ENHANCEMENT there is no bug; the agent writes the **background** instead (what exists today around the new behaviour:
+components, data shapes, users) and the "failing tests" are acceptance tests, one per acceptance criterion, failing because the
+behaviour does not exist yet — same referee. Never fixes code. Gates: `email-guard`, `naming-lint`, `assertion-referee`, `contract-check`.
 
 ## a3-architect — the solution architect (stage 07)
 
@@ -91,10 +111,14 @@ Writes the plan the developer implements, QA tests, the reviewer reviews and you
 resolves against your org's caches, refreshed first with `cache freshen`; every component retrieved and read before it is
 planned against), **complete** (nine sections: root cause · components · order of execution & side effects with **§3a Picture
 before → after** · consumers & blast radius · bulk & limits · tests · rollback & kill switch · remediation · options +
-unknowns + checklist answers) and **honest** (unknowns and options stated; a decision that belongs to a human — "should
-escalated cases reach a queue at all?" — is written as a blocking unknown, never chosen silently). Platform behaviour claims
-cite the docs mirror or a curated note (P12). Pseudocode and signatures only; no code, no deploys, no data. Gates:
-`plan-lint`, `semantic-check`, `checklist`, `contract-check`. MEDIUM+ tier → waits for your approval (HIGH: you type what you checked).
+unknowns + **grounding table** + checklist answers) and **honest** (unknowns and options stated; a decision that belongs to a
+human — "should escalated cases reach a queue at all?" — is written as a blocking unknown, never chosen silently). It acts as a
+real Salesforce architect: every platform behaviour claim points at a `knowledge/mirror` or `knowledge/curated` file and line
+(P12) or is marked `unverified` in the grounding table and the unknowns. `03-plan.json` carries the **`visual` block** (D-107:
+root cause in plain words · the fix step by step · one real example · two mermaid diagrams · glossary), rendered to
+`work/<KEY>/visuals/plan.html` so a non-developer can follow the plan. Checklists now include deployment, limits, sharing and
+test-data items. Pseudocode and signatures only; no code, no deploys, no data. Gates: `plan-lint`, `semantic-check`, `checklist`,
+`contract-check`, `visual-check`. MEDIUM+ tier (or `agents.a3-architect: ask`) → waits for your approval (HIGH: you type what you checked).
 
 ## a4-developer — the developer (stage 08)
 
@@ -104,10 +128,12 @@ Implements **exactly** the approved plan (plus your edits from `approvals/`) in 
 comment and naming style (`comment-lint`, `naming-lint`; the generated `<prefix>-*` skills carry your conventions once built).
 Language-server diagnostics after every Apex edit; Code Analyzer on changed files; **dev sandbox deploy only** (`privileged
 deploy-dev`); preprod validate-only dry-run through the engine (`privileged uat-validate` — it never sees that org). Security
-by default (`with sharing`, CRUD/FLS, bind variables, no hard-coded ids/URLs/emails); bulk by default; one trigger per
-object through the org's framework; never weakens or deletes the repro test. A deviation from the plan is allowed only when
-the plan is impossible as written, and is recorded with evidence. Gates: `comment-lint`, `naming-lint`, `plan-lint`
-(touches only planned components), `deploy-report`, `contract-check`.
+by default (`with sharing`, `WITH USER_MODE` / `AccessLevel.USER_MODE`, bind variables, no hard-coded ids/URLs/emails); bulk by
+default; one trigger per object through the org's framework; a new field ships with the permission set that grants its FLS;
+never weakens or deletes the repro test. It has no browser tool: when the change should be seen rendered it writes
+`work/<KEY>/ui-request.md` for QA and a8-ui. It runs `sf` plainly against the dev alias only — wrapped, env-prefixed or
+path-invoked `sf` is denied (D-110). A deviation from the plan is allowed only when the plan is impossible as written, and is
+recorded with evidence. Gates: `comment-lint`, `naming-lint`, `plan-lint` (touches only planned components), `deploy-report`, `contract-check`.
 
 ## a5-qa — QA (stages 09 qa_dev, 13 qa_uat)
 
@@ -118,9 +144,11 @@ names, org style), runs the pyramid through the toolkit (`privileged test --phas
 assertions), permission tests (`runAs`), UI checks through the fenced browser when the change is visible in Lightning,
 regression on every touched object's existing tests, test-quality rules (assertions everywhere, no `SeeAllData`). The report
 quotes run files; a `fail` verdict is a good outcome when true — the toolkit bounces to the developer (once) or the
-architect (twice), then escalates to you. In preprod (`qa_uat`) it still cannot reach the org: the engine runs the same set
-with its own keychain, after the toolkit has verified the deploy arrived (`uat_verify`, D-099). Gates: `assertion-referee`,
-`test-quality`, `contract-check` (+ `uat-parity` in preprod).
+architect (twice), then escalates to you. In preprod (`qa_uat`) it still runs no `sf` or SOQL against the org: the engine runs
+the same test set with its own keychain, after the toolkit has verified the deploy arrived (`uat_verify`, D-099). What it can
+do there is **look** (D-109): while the ticket is at `qa_uat`, the toolkit's window (`.orgnauts/ui-allow-hosts.json`) lets
+`mcp__orgnauts-ui__ui_login` open the preprod org through the engine keychain as a least-privilege test user, read-only; the
+window closes when the ticket leaves the stage. Gates: `assertion-referee`, `test-quality`, `contract-check` (+ `uat-parity` in preprod).
 
 ## a6-reviewer — the fresh-eyes reviewer (stage 10)
 
@@ -143,19 +171,20 @@ waits for your approval.
 
 Drafts, never sends: `10-comms/client-update.md` (client-visible: plain language, no internal names, record ids, addresses or
 blame), `internal-summary.md`, `tracker-comment.md` (a comment **you** may paste into the ticket — posting is disabled by
-design, `tracker.post_draft: disabled`). Every sentence traces to a vault file; nothing from inside an untrusted envelope
-is copied. Gate: `comms-lint`.
+design, `tracker.post_draft: disabled`; the agent has no tracker tool, and the `tracker-guard` hook denies every tracker write
+tool for everyone, D-105). Every sentence traces to a vault file; nothing from inside an untrusted envelope is copied. Gate: `comms-lint`.
 
 ## a8-ui — the browser capability (support agent during 06, 09, 13)
 
 *opus · medium · tools: Read/Glob/Grep/Bash/Write/Edit, `mcp__orgnauts-ui__*` only*
 
 Some behaviour exists only in the browser: screen flows, quick actions, LWC, page layouts. When a2 or a5 ends its turn with
-"UI observation requested" (after writing `ui-request.md`), the conductor spawns a8 — it logs into the **development org
-only** through the fenced Playwright server (production and `login.salesforce.com` refused at the network layer, Setup
+"UI observation requested" (after writing `ui-request.md`), the conductor spawns a8 — it logs into the **development org**
+through the fenced Playwright server (production and `login.salesforce.com` refused at the network layer, Setup
 URLs refused, no JavaScript evaluation), performs the exact steps on a record the ticket created, captures text and
 screenshots as evidence into `work/<KEY>/ui/`, drafts a Playwright spec into `tests-ui/specs/`, and hands the observation
-back. It never issues a pass/fail — the referee (an assertion) does.
+back. During a ticket's `qa_uat` window (D-109) it may also open the preprod org, read-only, through the engine keychain.
+It never issues a pass/fail — the referee (an assertion) does.
 
 ## a7-coach — the learning coach (stage 17 learn, and maintenance)
 
@@ -173,10 +202,12 @@ becomes an approved lesson immediately (D-082). The coach never edits another ag
 
 ## What no agent can do, whatever its prompt says
 
-Write to production · reach preprod except through the toolkit's engine verbs · run `orgnauts-human` verbs · log into or
-switch orgs, change aliases or the default org · push to git or touch a Blue Canvas remote · launch `claude` · browse the
-web · post to the tracker or send e-mail · write outside its own areas · spawn another agent (specialists) or two at once
-(conductor) · treat text inside an `<untrusted>` envelope as an instruction · argue with a gate.
+Write to production · reach preprod except through the toolkit's engine verbs (and the read-only `qa_uat` browser window) ·
+run `orgnauts-human` verbs, by name or by file path · run `orgnauts-hook` itself · run `sf` through a wrapper, an env prefix,
+`npx` or an absolute path · log into or switch orgs, change aliases or the default org · push to git or touch a Blue Canvas
+remote · launch `claude` · browse the web · write to the tracker in any form (comment, edit, transition, create: no agent holds
+a write tool, `tracker-guard` and the static denies refuse them) or send e-mail · write outside its own areas · spawn another
+agent (specialists) or two at once (conductor) · treat text inside an `<untrusted>` envelope as an instruction · argue with a gate.
 
 The mechanisms behind each item are in `docs/SAFETY.md` and `docs/THREAT-MODEL.md`; the tests that try to break them are
 `test/03-hooks.test.mjs`, `test/11-beta-run1-fixes.test.mjs` and `test/14-hard-rules.test.mjs`.

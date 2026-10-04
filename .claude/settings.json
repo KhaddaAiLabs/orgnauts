@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "_orgnauts": "Project settings \u2014 hooks + permissions ARE the enforcement layer. Agents cannot edit this file (deny below + write-guard). Hooks call the INSTALLED toolkit copy in ~/.orgnauts/bin (npm run install:toolkit), never the repo source, so an agent editing src/ changes nothing at runtime.",
+  "_orgnauts": "Project settings \u2014 hooks + permissions ARE the enforcement layer. Agents cannot edit this file (deny below + write-guard). Hooks call the INSTALLED toolkit copy in ~/.orgnauts/bin (npm run install:toolkit), never the repo source, so an agent editing src/ changes nothing at runtime. v0.3.0: tracker-guard keeps the tracker MCP (D-105) read-only; the static denies name the Atlassian write tools and the wrapper spellings of sf/human-CLI that the policy hook also refuses.",
   "enabledMcpjsonServers": [
     "sf-dev",
     "orgnauts-evidence",
@@ -66,6 +66,16 @@
           {
             "type": "command",
             "command": "\"$HOME/.orgnauts/bin/orgnauts-hook\" data-guard",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.orgnauts/bin/orgnauts-hook\" tracker-guard",
             "timeout": 5
           }
         ]
@@ -261,7 +271,33 @@
       "Bash(sf data update * --target-org UAT*)",
       "Bash(sf data delete * --target-org UAT*)",
       "Bash(sf data upsert * --target-org UAT*)",
-      "Bash(sf data import * --target-org UAT*)"
+      "Bash(sf data import * --target-org UAT*)",
+      "mcp__atlassian__addCommentToJiraIssue",
+      "mcp__atlassian__editJiraIssue",
+      "mcp__atlassian__createJiraIssue",
+      "mcp__atlassian__transitionJiraIssue",
+      "mcp__atlassian__addWorklogToJiraIssue",
+      "mcp__atlassian__createIssueLink",
+      "mcp__atlassian__createConfluencePage",
+      "mcp__atlassian__updateConfluencePage",
+      "mcp__atlassian__createConfluenceFooterComment",
+      "mcp__atlassian__createConfluenceInlineComment",
+      "Bash(node dist/cli/human.js *)",
+      "Bash(node * dist/cli/human.js *)",
+      "Bash(node *orgnauts-human.js *)",
+      "Bash(node *dispatch.js *)",
+      "Bash(*orgnauts-hook *)",
+      "Bash(npx sf *)",
+      "Bash(npx @salesforce/cli *)",
+      "Bash(npx -y @salesforce/cli *)",
+      "Bash(bash -c *sf *)",
+      "Bash(sh -c *sf *)",
+      "Bash(eval *sf *)",
+      "Bash(xargs *sf *)",
+      "Bash(sf api request * -o Production*)",
+      "Bash(sf api request * -o UAT*)",
+      "Bash(sf api request * --target-org Production*)",
+      "Bash(sf api request * --target-org UAT*)"
     ],
     "additionalDirectories": []
   },

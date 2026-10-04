@@ -1,7 +1,25 @@
 # config/tracker.yaml — READ-ONLY tracker access. post_draft is disabled and cannot be enabled (hard floor).
+#
+# adapter:
+#   mcp   (default, D-105) — the ticket is fetched by the a1-intake agent through the tracker's OWN Claude Code MCP server
+#                            (Atlassian Jira MCP by default) and imported into the vault with `orgnauts agent ticket import`.
+#                            No API token, no base URL, nothing company-specific here. Any tracker with an MCP server works:
+#                            set `mcp.server` to its server name and `mcp.read_tools` to its READ tools; write tools are denied.
+#   jira  — the toolkit itself calls the Jira REST API (needs ORGNAUTS_JIRA_EMAIL / ORGNAUTS_JIRA_TOKEN in the environment).
+#   file  — no tracker: drop inbox/<KEY>.md (template: templates/inbox-ticket.md). Also the fallback for `mcp` when such a file exists.
 version: 1
-adapter: file                          # file | jira   (file = inbox/<KEY>.md; great for the first DEMO ticket)
-project_key: DEMO                      # your Jira project key, e.g. PROJ
+adapter: mcp
+project_key: DEMO                      # your tracker's project key, e.g. PROJ (only this prefix may open a ticket)
+mcp:
+  server: atlassian                    # Claude Code MCP server name → tools are mcp__<server>__<tool>  (`claude mcp list`)
+  kind: jira                           # jira | linear | github | azure-devops | other — only used in prompts and the doctor message
+  read_tools:                          # the ONLY tracker tools a1-intake may call (sync writes them into .claude/agents/a1-intake.md)
+    - getJiraIssue
+    - searchJiraIssuesUsingJql
+    - getJiraIssueRemoteIssueLinks
+    - getVisibleJiraProjects
+    - atlassianUserInfo
+  prior_art_jql: 'project = {project} AND updated >= -365d AND (text ~ "{keywords}") ORDER BY updated DESC'
 jira:
   base_url: "https://your-site.atlassian.net"
   email_env: ORGNAUTS_JIRA_EMAIL       # env var holding the Jira account email

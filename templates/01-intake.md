@@ -1,5 +1,12 @@
 # 01 — Intake · <KEY> — <title>
 
+<!-- Visual (D-107): the toolkit renders `01-intake.json → visual` to {{VISUAL}} (work/<KEY>/visuals/intake.html). This markdown is
+     for the reviewer; the visual page is for everyone else, so write the block for a non-developer.
+     JSON-contract reminder — `visual` keys: issue {headline, steps[] (≥2), where_it_breaks} · fix {headline, steps[] (≥1)} = WHAT MUST
+     BE DONE (ENHANCEMENT: what to build) · example {record, today, expected} · mermaid {issue, fix} (each starts with
+     flowchart/graph/sequenceDiagram/stateDiagram, ≥ 2 connected nodes, every box a real name) · glossary[] {term, meaning} · open_questions[].
+     Self-check: `orgnauts agent visual <KEY> --stage intake`; the `visual-check` gate runs the same check. -->
+
 ## 1. Plain English — business lens
 …
 

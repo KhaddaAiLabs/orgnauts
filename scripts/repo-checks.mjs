@@ -26,7 +26,7 @@ const problems = [];
 const fail = (msg) => problems.push(msg);
 
 // 1 + 2 — hooks
-const REQUIRED_HOOKS = ["session-start", "prompt-router", "agent-gate", "policy", "write-guard", "data-guard", "tokens", "post-edit", "stage-gate", "stop-guard", "precompact"];
+const REQUIRED_HOOKS = ["session-start", "prompt-router", "agent-gate", "policy", "write-guard", "data-guard", "tracker-guard", "tokens", "post-edit", "stage-gate", "stop-guard", "precompact"];
 let settings;
 try {
   settings = JSON.parse(read(".claude/settings.json"));

@@ -22,10 +22,14 @@ open ─ prior_art(a1) ─ intake(a1)·gate ─ baseline(a0b) ─ cartography(a0
      ─ prod_verify(toolkit) ─ remediation(HUMAN, optional) ─ learn(a7 coach) ─ done            (19 stages)
 ```
 
-Every stage has `gates[]` (mechanical, run by the SubagentStop hook), optionally a `human_gate` key (looked up in
-`config/autonomy.yaml` by tier: LOW/MEDIUM/HIGH → ask/auto; a per-agent `ask` overlay wins), and `always_human` for the
-deploy/remediation stages. `manifest.yaml` is the single source of truth per ticket; a `.state.json` sidecar lets the
-zero-dependency hooks read status without parsing YAML.
+Every stage has `gates[]` (mechanical, run by the SubagentStop hook), optionally a `human_gate` key, and `always_human` for the
+deploy/remediation stages. **Who stops the pipeline (D-106):** `config/autonomy.yaml → agents.<agent>` is read first — `ask`
+stops after that agent's stage, `auto` never stops there, `inherit` falls back to the tier matrix
+(`tiers.<TIER>.human_gates.<stage>`; a stage without a gate key is automatic). `always_human` stages ignore all of it (hard
+floor). The WAIT_HUMAN prompt ends with "(Stopped because: …)" naming the rule that applied, and names
+`work/<KEY>/visuals/<stage>.html` when the stage has one. `manifest.yaml` is the single source of truth per ticket (incl. the
+flag `ticket_import_pending` while the vault still holds the MCP stub, D-105); a `.state.json` sidecar lets the zero-dependency
+hooks and the UI MCP server read status without parsing YAML.
 
 **Bounce ladders** (`bounceTarget`): qa fail → develop (1) → plan (2) → escalate (3); repro: 2 tries then honest escalation;
 every other agent stage: one retry with the gate report, then escalate. **Rejection** (`/reject … --reason`) re-runs the
@@ -43,13 +47,18 @@ retrieve that could not run sends the ticket back to `deploy_uat` as `waiting_hu
 `uat_verify → deploy_uat`). A human may accept named differences with a reason (`orgnauts-human parity`), valid for the same source
 hash only. **Budget**: over the per-ticket **fresh** tokens (input + output + cache_creation — cache reads are
 re-reads of context already paid for and are never counted, D-094) or USD → `parked` (resumable). **Human gates**: `waiting_human` with a typed `waiting.kind`
-(approval | deploy | remediation | question | budget | baseline | canary).
+(approval | deploy | remediation | question | budget | baseline | canary). **Baseline source (D-108)**: with several `role: preprod`
+orgs configured and none chosen (`baseline_source: true` marks the default), the baseline stage stops as `waiting_human (baseline)`
+until `/approve <KEY> --stage baseline --answer "source:<alias>"` or `orgnauts-human baseline decide <KEY> --source <alias>`;
+the sync then compares dev with that source and copies only the differing scope components (source → dev).
 
 ## 3. Gates (`src/gates/`)
 
 | Gate | Reads | Passes when |
 |---|---|---|
 | contract-check | `NN-*.json` vs `schemas/contracts/*.schema.json` | valid schema; evidence refs that look like files exist |
+| ticket-import | `ticket.json` (prior_art, D-105) | the vault no longer holds the MCP stub: a1 imported the real ticket (`orgnauts agent ticket import`) and it has a real title |
+| visual-check | `01-intake.json` / `03-plan.json → visual` (intake, plan, D-107) | the block is complete (issue · fix · example · two mermaid diagrams that start with a diagram keyword and connect ≥ 2 nodes, no script tags) and renders to `work/<KEY>/visuals/<stage>.html` |
 | risk-floor | `01-intake.json` | computes tier floor (Apex/permissions → HIGH; flow/VR → MEDIUM); agent may only raise |
 | baseline-check | `00b-baseline.json` | every in-scope component equal to preprod after sync or explicitly excluded |
 | email-guard | changed files + artifacts | no address outside `safety.allowed_test_emails` |
@@ -75,9 +84,10 @@ Outcomes are `passed | failed | unavailable`; **unavailable is never passed**. E
 | Event | Hook | Behaviour |
 |---|---|---|
 | PreToolUse Agent | `agent-gate` (fast, ≤50 ms) | deny agents not in `next_allowed_stages`, denied names, when waiting/on hold/parked/done, **and any background spawn** (`run_in_background` and every other spelling — D-093) |
-| PreToolUse Bash | `policy` (fast) | R1 human verbs · R2 HOME/SF_* / engine home · R2b `sf config set` / `sf alias set` / `sf org login` (re-pointing an alias or the default org) · R3 git push / Blue Canvas · R4 nested claude · R5 direct HTTP to Salesforce · R6 protected paths (write targets only) · R7 sf targets (any explicit target that is not a configured development alias is denied — reads included, bare usernames included; preprod/prod get specific messages; writes need an explicit dev target; org login deny) |
+| PreToolUse Bash | `policy` (fast) | R1 human verbs, by name **and by file path** (`node dist/cli/human.js …`) · R1-hook-direct (agents never run `orgnauts-hook` / `dispatch.js`) · R2 HOME/SF_* / engine home · R2-env-prefix (`VAR=x sf …`, incl. `ORGNAUTS_HOOKS_OFF=1 sf …`) · R2b `sf config set` / `sf alias set` / `sf org login` (re-pointing an alias or the default org) · R3 git push / Blue Canvas · R4 nested claude · R5 direct HTTP to Salesforce · R6 protected paths (write targets only; incl. `node_modules/`, `.claude/settings.local.json`, `.gitignore`, `.forceignore`, `org/sfdx-project.json`, `tests-ui/auth.setup.ts`, `tests-ui/playwright.config.ts`, `package-lock.json`, `tsconfig.json`; absolute paths into the repo are judged like relative ones) · R7 sf targets (any explicit target that is not a configured development alias is denied — reads included, bare usernames included; preprod/prod get specific messages; writes and `sf api request` need an explicit dev target; org login deny) · R7-wrapped-sf (`sf` through `bash -c` / `sh -c` / `eval` / `xargs` / `env` / `node -e` / `python -c` / `npx` / an absolute path / `$(which sf)` — a wrapped command cannot be judged, so it is refused) (D-110) |
 | PreToolUse Edit/Write/… | `write-guard` (fast) | write areas only; own ticket vault; own agent memory; role exceptions (a0 → docs/org-map, a7 → lessons/PENDING) |
 | PreToolUse mcp__sf-dev__.* | `data-guard` (fast) | side-effect tools need a fresh PASS email canary |
+| PreToolUse mcp__<tracker server>__.* | `tracker-guard` (fast, D-105) | on the configured tracker MCP server only the `tracker.mcp.read_tools` may be called; any other tool, and any tool whose name looks like a write (add/edit/create/transition/update/delete/…), is denied with rule `T1-tracker-readonly` and recorded as `policy.denied` |
 | PostToolUse Agent | `tokens` | per agent/model/ticket accounting (payload shape defensive; transcript fallback) |
 | — | (design note) | loops are bounded by Orgnauts' own persisted counters (≤3 gate blocks per attempt, 8 consecutive stop blocks per session, reset on every new human prompt); `stop_hook_active` is deliberately not relied upon |
 | PostToolUse Edit/Write | `post-edit` | advisory comment/naming feedback |
@@ -87,14 +97,26 @@ Outcomes are `passed | failed | unavailable`; **unavailable is never passed**. E
 | SessionStart / PreCompact | `session-start` / `precompact` | state + P7 reminders as context |
 
 Fast deny hooks are zero-dependency (node:fs/path only) and fail **closed** on internal errors; a timed-out hook renders
-no decision in Claude Code, so speed is safety and the hard cases are duplicated as static `permissions.deny` rules.
-`ORGNAUTS_HOOKS_OFF=1` is the documented human escape hatch.
+no decision in Claude Code, so speed is safety and the hard cases are duplicated as static `permissions.deny` rules
+(incl. the Atlassian write tools by name and the wrapper spellings of `sf` and the human CLI). The policy hook catches
+**known spellings**; it is a filter, not a wall. The walls are the read-only production identity, Claude Code's per-tool permission
+prompt, each agent's `tools:` allowlist and the toolkit-only verbs. `ORGNAUTS_HOOKS_OFF=1` is the documented human escape hatch.
 
 ## 5. Engines (`src/engines/`)
 
-- **lifecycle** — open (tracker fetch → envelope-wrapped `ticket.md`, manifest, prior-art index), hold/resume (tracker
-  re-fetch, diff classification NONE/COMMENTS_ONLY/DESCRIPTION_AC/SCOPE_CHANGED/CANCELLED_DONE, sandbox-refresh detection,
-  baseline re-check, locks), deploy marks, read-only production verify.
+- **lifecycle** — open (tracker fetch → envelope-wrapped `ticket.md`, manifest, prior-art index; with the `mcp` adapter a STUB
+  until a1 imports), `ticketImport` (D-105: validates `00-inbox/ticket-import.json` against `contracts/ticket-import`, strips
+  `<untrusted>` tags, writes `ticket.json`/`ticket.md`, re-indexes prior art; a second import is a refresh with the resume diff
+  rules), hold/resume (tracker re-fetch, diff classification NONE/COMMENTS_ONLY/DESCRIPTION_AC/SCOPE_CHANGED/CANCELLED_DONE,
+  sandbox-refresh detection, baseline re-check, locks), deploy marks (the production mark closes the `qa_uat` browser window),
+  read-only production verify.
+- **tracker** (`src/engines/tracker/`) — adapters `mcp` (default: the toolkit holds no credential; `inbox/<KEY>.md|.json` is the
+  manual paste fallback), `jira` (REST with env token), `file`.
+- **visual** (D-107) — `visualProblems` + `renderStageVisual`: a self-contained HTML page per stage from the contract's `visual`
+  block, mermaid drawn in the browser, every agent string HTML-escaped (a ticket cannot inject markup).
+- **uihosts** (D-109) — after `uat_verify` passes, resolves the preprod hosts with the engine keychain and writes
+  `.orgnauts/ui-allow-hosts.json {ticket, stage: qa_uat, org, hosts, at}`; the UI MCP server honours it only while the sidecar
+  says that ticket is at `qa_uat` and running.
 - **baseline** — 3-way classification (IDENTICAL / UAT-NEWER / DEV-NEWER / BOTH-CHANGED / UNKNOWN / MISSING-*) with an
   ancestor from fingerprints or Tooling dates; snapshot + git commit; policy from `config/policy.yaml → baseline_sync`;
   human decisions via `orgnauts-human baseline decide` or `/approve … --answer "keep-dev:… take-uat:…"`.
@@ -121,14 +143,18 @@ agent keychain ($HOME)              engine keychain (~/.orgnauts/engine)
    agents (MCP / wrappers)          toolkit privileged verbs only
 ```
 
-Direction of metadata is always preprod → dev (baseline) and dev → (human) → preprod → (human) → production.
+Direction of metadata is always preprod → dev (baseline, from the chosen source) and dev → (human) → preprod → (human) → production.
+One read-only exception to "agents never reach preprod": during a ticket's `qa_uat` window the UI MCP server logs the browser
+into preprod with the **engine** keychain (D-109) — the agent sees a page, never a credential, and the engine's preprod user
+should be a least-privilege test user (`safety.ui.uat_test_user_only`).
 
 ## 7. Data flow of a ticket vault (`work/<KEY>/`)
 
-`ticket.json/.md` · `00-inbox/` · `00b-baseline.*` · `00c-prior-art.*` · `00d-cartography.*` · `01-intake.*` · `02-repro.*`
-· `03-plan.*` · `04-implementation.*` · `05-test-report.*` · `06-review.*` + `06b-deploy-brief.md` + `06c-deploy-manifest.*` · `07a-uat-parity.md` · `07-uat-report.*`
-· `08-prod-verify.md` · `09-retro.*` · `10-comms/` · `artifacts/` · `evidence/` · `ui/` · `validations/` · `approvals/`
-· `events.jsonl` · `facts.md` · `manifest.yaml` · `.state.json` · `history/`.
+`ticket.json/.md` · `00-inbox/` (incl. `ticket-import.json` and `tracker-hits.json` written by a1, D-105) · `00b-baseline.*` ·
+`00c-prior-art.*` · `00d-cartography.*` · `01-intake.*` · `02-repro.*` · `03-plan.*` · `04-implementation.*` · `05-test-report.*`
+· `06-review.*` + `06b-deploy-brief.md` + `06c-deploy-manifest.*` · `07a-uat-parity.md` · `07-uat-report.*`
+· `08-prod-verify.md` · `09-retro.*` · `10-comms/` · `visuals/` (`intake.html`, `plan.html`, toolkit-rendered, D-107) · `artifacts/`
+· `evidence/` · `ui/` · `validations/` · `approvals/` · `events.jsonl` · `facts.md` · `manifest.yaml` · `.state.json` · `history/`.
 Toolkit-owned: manifest, state, events, validations, approvals. Agents own the rest of their ticket's vault.
 
 ## 8. Learning loop
@@ -146,8 +172,13 @@ screen as a form, not raw YAML. `models.yaml` carries both
 the model **and the reasoning effort** per agent (D-095: `effort: low|medium|high|xhigh|max|inherit`, synced into the
 `effort:` line of each agent file — note that `CLAUDE_CODE_EFFORT_LEVEL` in the environment beats agent frontmatter, so
 doctor warns when it is set), and `budgets.yaml` carries the model **prices** (D-094) so cost is never silently zero.
-Tracked defaults in
+Three v0.3.0 settings: `tracker.yaml → adapter: mcp` (default) with `mcp.server`, `mcp.kind`, `mcp.read_tools` — the tracker is
+read through the human's own Claude Code MCP connector, no token in the toolkit, and `sync` rewrites the a1-intake `tools:` line
+from `read_tools` (D-105); `autonomy.yaml → agents.<agent>: ask | auto | inherit` — where the system stops for you, per agent
+(D-106); `orgs.yaml` — several `role: preprod` orgs, each with an optional `label:` and one `baseline_source: true` as the default
+baseline source (D-108). Runtime state that is not config: `.orgnauts/ui-allow-hosts.json`, the one-ticket preprod browser
+window for `qa_uat` (D-109), written and cleared by the toolkit. Tracked defaults in
 `config/defaults/`, a user's personal copies in `config/*.yaml` (gitignored; read first, default otherwise — see
 `config/README.md`). `orgnauts-human sync` propagates config into generated files (`.mcp.json`, compiled policy, agent model
-lines, `.claude/settings.local.json` deny blocks); the UI is an editor over the same files. `scripts/hardcode-lint.mjs` fails
-CI if anything company-specific leaks into tracked files — `config/defaults/` included.
+lines and the a1 tracker tools, `.claude/settings.local.json` deny blocks); the UI is an editor over the same files.
+`scripts/hardcode-lint.mjs` fails CI if anything company-specific leaks into tracked files — `config/defaults/` included.

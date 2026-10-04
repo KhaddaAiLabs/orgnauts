@@ -85,6 +85,18 @@
               "string",
               "null"
             ]
+          },
+          "baseline_source": {
+            "type": "boolean",
+            "description": "D-108: when several preprod orgs exist, the one baseline sync copies FROM by default (a ticket may override)."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 60,
+            "description": "Human-friendly name shown when the toolkit asks which org to use (e.g. 'Partial UAT (shared)')."
           }
         }
       }

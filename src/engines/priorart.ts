@@ -6,7 +6,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { type AllConfig } from "../core/config.js";
+import { trackerMcp, type AllConfig } from "../core/config.js";
 import { logGrep, logPath } from "../core/git.js";
 import { listTickets, tryLoadManifest } from "../core/manifest.js";
 import { projectPaths, vaultDir, type ProjectPaths } from "../core/paths.js";
@@ -86,6 +86,8 @@ export interface PriorArtResult {
   history: { sha: string; date: string; subject: string; source: string }[];
   lessons: { file: string; title: string; triggers: string[] }[];
   warnings: string[];
+  /** D-105 (mcp adapter): the query the agent should run with the tracker's search tool. */
+  suggested_search?: string;
 }
 
 /** Guess components mentioned in the ticket text that exist in the local source tree. */
@@ -103,7 +105,30 @@ export function guessScope(p: ProjectPaths, text: string): string[] {
   return [...found].sort();
 }
 
-export async function buildPriorArt(ticket: string, opts: { p?: ProjectPaths; cfg: AllConfig; snapshot: TicketSnapshot }): Promise<PriorArtResult> {
+/**
+ * D-105: with the MCP tracker adapter the agent runs the tracker search itself and saves the hits as JSON
+ * (`[{key, title, status?, updated?, resolution?, components?, labels?}]` or the raw MCP result holding an `issues[]`
+ * array). This normalises either shape; anything unreadable is skipped, never fabricated.
+ */
+export function readTrackerHitsFile(file: string): SearchHit[] {
+  const raw = readJsonOr<unknown>(file, undefined);
+  if (!raw) return [];
+  const arr: unknown[] = Array.isArray(raw) ? raw : Array.isArray((raw as { issues?: unknown[] }).issues) ? (raw as { issues: unknown[] }).issues : Array.isArray((raw as { hits?: unknown[] }).hits) ? (raw as { hits: unknown[] }).hits : [];
+  const out: SearchHit[] = [];
+  for (const x of arr) {
+    if (!x || typeof x !== "object") continue;
+    const o = x as Record<string, unknown>;
+    const f = (o.fields && typeof o.fields === "object" ? (o.fields as Record<string, unknown>) : {});
+    const key = String(o.key ?? "").toUpperCase();
+    if (!/^[A-Z][A-Z0-9_]{0,15}-\d{1,8}$/.test(key)) continue;
+    const str = (v: unknown) => (typeof v === "string" ? v : v && typeof v === "object" && typeof (v as { name?: unknown }).name === "string" ? String((v as { name: string }).name) : undefined);
+    const names = (v: unknown) => (Array.isArray(v) ? v.map((e) => str(e) ?? "").filter(Boolean) : []);
+    out.push({ key, title: String(o.title ?? f.summary ?? ""), status: str(o.status) ?? str(f.status), updated: str(o.updated) ?? str(f.updated), resolution: str(o.resolution) ?? str(f.resolution), components: names(o.components ?? f.components), labels: names(o.labels ?? f.labels) });
+  }
+  return out;
+}
+
+export async function buildPriorArt(ticket: string, opts: { p?: ProjectPaths; cfg: AllConfig; snapshot: TicketSnapshot; hitsFile?: string }): Promise<PriorArtResult> {
   const p = opts.p ?? projectPaths();
   const s = opts.snapshot;
   const text = `${s.title} ${s.description} ${s.acceptance_criteria ?? ""} ${s.comments.map((c) => c.body).join(" ")}`;
@@ -131,12 +156,21 @@ export async function buildPriorArt(ticket: string, opts: { p?: ProjectPaths; cf
     .sort((a, b) => b.score - a.score)
     .slice(0, 5);
 
-  // tracker search
+  // tracker search — jira/file: the toolkit searches; mcp (D-105): the agent searched and saved the hits (default file
+  // work/<KEY>/00-inbox/tracker-hits.json, or --hits <file>); keyword-scored so the strongest hits come first
   let trackerHits: SearchHit[] = [];
-  try {
-    const jql = opts.cfg.tracker.jira.prior_art_jql.replace("{project}", opts.cfg.tracker.project_key).replace("{keywords}", kws.slice(0, 6).join(" "));
-    trackerHits = (await trackerFor(opts.cfg).search(opts.cfg.tracker.adapter === "jira" ? jql : kws.slice(0, 8).join(" "), 15)).filter((h) => h.key !== ticket);
-  } catch { /* tracker offline or not configured — recorded as none */ }
+  const hitsFile = opts.hitsFile ?? path.join(vaultDir(p, ticket), "00-inbox", "tracker-hits.json");
+  if (opts.cfg.tracker.adapter === "mcp") {
+    if (exists(hitsFile)) {
+      trackerHits = readTrackerHitsFile(hitsFile).filter((h) => h.key !== ticket).map((h) => ({ ...h, score: h.score ?? kws.filter((k) => `${h.title} ${h.labels.join(" ")} ${h.components.join(" ")}`.toLowerCase().includes(k)).length }));
+      trackerHits.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    }
+  } else {
+    try {
+      const jql = opts.cfg.tracker.jira.prior_art_jql.replace("{project}", opts.cfg.tracker.project_key).replace("{keywords}", kws.slice(0, 6).join(" "));
+      trackerHits = (await trackerFor(opts.cfg, process.env, p).search(opts.cfg.tracker.adapter === "jira" ? jql : kws.slice(0, 8).join(" "), 15)).filter((h) => h.key !== ticket);
+    } catch { /* tracker offline or not configured — recorded as none */ }
+  }
 
   // git history (pre-system tickets): commits touching guessed scope files + commits mentioning ticket-like keys with our keywords
   const history: PriorArtResult["history"] = [];
@@ -169,7 +203,15 @@ export async function buildPriorArt(ticket: string, opts: { p?: ProjectPaths; cf
     if (r.escaped_defect) warnings.push(`${r.key} had an escaped defect — read its 09-retro.md`);
   }
 
-  const result: PriorArtResult = { ticket, built_at: nowIso(), keywords: kws, scope_guess: scopeGuess, related, tracker_hits: trackerHits, history: uniqHistory, lessons, warnings };
+  // D-105: tell the agent exactly what to search when the tracker is reached through MCP and no hits were handed over yet
+  let suggested_search: string | undefined;
+  if (opts.cfg.tracker.adapter === "mcp") {
+    const m = trackerMcp(opts.cfg);
+    suggested_search = (m.prior_art_jql ?? opts.cfg.tracker.jira.prior_art_jql).replace("{project}", opts.cfg.tracker.project_key).replace("{keywords}", kws.slice(0, 6).join(" "));
+    if (!exists(hitsFile)) warnings.push(`tracker search not done yet: run the tracker's search tool (mcp__${m.server}__${m.read_tools.find((t) => /search/i.test(t)) ?? "search"}) with: ${suggested_search}  → save the result as ${path.relative(p.root, hitsFile)} and re-run \`orgnauts agent prior-art ${ticket}\``);
+  }
+
+  const result: PriorArtResult = { ticket, built_at: nowIso(), keywords: kws, scope_guess: scopeGuess, related, tracker_hits: trackerHits, history: uniqHistory, lessons, warnings, suggested_search };
   writeJsonAtomic(path.join(vaultDir(p, ticket), "00c-prior-art.index.json"), result);
   emitEvent({ ticket, type: related.length || trackerHits.length ? "prior_art.found" : "prior_art.none", stage: "open", data: { related: related.map((r) => r.key), tracker_hits: trackerHits.map((h) => h.key), history: uniqHistory.length } }, p);
   return result;

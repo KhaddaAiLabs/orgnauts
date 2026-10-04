@@ -26,6 +26,10 @@ export interface OrgConfig {
   deliverability_verified_by?: string | null;
   instance_url?: string | null;
   notes?: string | null;
+  /** D-108: with several preprod orgs, the one baseline sync copies FROM unless the ticket chose another. */
+  baseline_source?: boolean;
+  /** Human-friendly name shown when the toolkit asks which org to use. */
+  label?: string | null;
 }
 
 export interface OrgsConfig {
@@ -186,10 +190,28 @@ export interface MaskingConfig {
   objects: Record<string, MaskingObject>;
 }
 
+/**
+ * D-105 — tracker adapters:
+ *   mcp  (default) the ticket is fetched by the a1-intake agent through the tracker's own Claude Code MCP server
+ *                  (Atlassian Jira MCP by default) and imported into the vault with `orgnauts agent ticket import`.
+ *                  The toolkit never holds a tracker credential; any tracker with an MCP server works.
+ *   jira           the toolkit calls the Jira REST API itself (needs the two env vars below).
+ *   file           inbox/<KEY>.md — no tracker at all (and the fallback for `mcp` when such a file exists).
+ */
+export type TrackerAdapterName = "mcp" | "jira" | "file";
+
+export interface TrackerMcpConfig {
+  server: string;            // Claude Code MCP server name → tools are mcp__<server>__<tool>
+  kind?: string;             // jira | linear | github | azure-devops | other (prompts + doctor message only)
+  read_tools: string[];      // the ONLY tracker tools a1-intake may call; sync writes them into the agent file
+  prior_art_jql?: string;
+}
+
 export interface TrackerConfig {
   version: number;
-  adapter: "jira" | "file";
+  adapter: TrackerAdapterName;
   project_key: string;
+  mcp?: TrackerMcpConfig;
   jira: {
     base_url: string;
     email_env: string;
@@ -198,6 +220,19 @@ export interface TrackerConfig {
     max_results: number;
   };
   post_draft: "disabled";
+}
+
+export const DEFAULT_TRACKER_MCP: TrackerMcpConfig = {
+  server: "atlassian",
+  kind: "jira",
+  read_tools: ["getJiraIssue", "searchJiraIssuesUsingJql", "getJiraIssueRemoteIssueLinks", "getVisibleJiraProjects", "atlassianUserInfo"],
+  prior_art_jql: 'project = {project} AND updated >= -365d AND (text ~ "{keywords}") ORDER BY updated DESC',
+};
+
+/** The MCP tracker block with defaults filled in (the config file may omit it). */
+export function trackerMcp(cfg: Pick<AllConfig, "tracker">): TrackerMcpConfig {
+  const m = cfg.tracker.mcp;
+  return { ...DEFAULT_TRACKER_MCP, ...(m ?? {}), read_tools: m?.read_tools?.length ? m.read_tools : DEFAULT_TRACKER_MCP.read_tools };
 }
 
 export interface NotifyConfig {
@@ -319,8 +354,18 @@ export function devOrg(cfg: AllConfig): OrgConfig {
   return o;
 }
 
+/** Every preprod-role org (a team may have several: shared Partial UAT, a QA copy, a staging org…). D-108. */
+export function preprodOrgs(cfg: AllConfig): OrgConfig[] {
+  return cfg.orgs.orgs.filter((o) => o.role === "preprod");
+}
+
+/**
+ * The DEFAULT preprod org: the one flagged `baseline_source: true`, else the first configured. Baseline sync may use
+ * another one for a given ticket (the human picks when several exist — D-108); parity and preprod test runs use this one.
+ */
 export function preprodOrg(cfg: AllConfig): OrgConfig | undefined {
-  return orgByRole(cfg, "preprod");
+  const all = preprodOrgs(cfg);
+  return all.find((o) => o.baseline_source === true) ?? all[0];
 }
 
 export function evidenceOrg(cfg: AllConfig): OrgConfig | undefined {

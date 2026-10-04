@@ -30,5 +30,8 @@ if (files.length === 0) {
   process.exit(1);
 }
 
-const r = spawnSync(process.execPath, ["--test", ...passthrough, ...files], { cwd: repo, stdio: "inherit" });
+// v0.3.0: the suite is offline for real — no `sf` call may leave this process (the old suite pinged every org in the
+// developer's keychain through `sf org display` / `sf org list`). Pass ORGNAUTS_ONLINE_TESTS=1 to allow org calls deliberately.
+const env = { ...process.env, ORGNAUTS_OFFLINE: process.env.ORGNAUTS_ONLINE_TESTS === "1" ? "" : "1" };
+const r = spawnSync(process.execPath, ["--test", ...passthrough, ...files], { cwd: repo, stdio: "inherit", env });
 process.exit(r.status ?? 1);

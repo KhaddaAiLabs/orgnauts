@@ -239,6 +239,7 @@
           ${m.baseline ? `<h3 style="margin-top:14px">Baseline</h3><div class="muted">synced ${esc(ago(m.baseline.synced_at))} · ancestor via ${esc(m.baseline.ancestor_source || '?')} · ${m.baseline.decisions.length} decision(s)</div>` : ''}</div>
       </div>
       <div class="grid g2" style="margin-top:14px">
+        ${(d.visuals && d.visuals.length) ? `<div class="card" style="border-color:var(--ok)"><h3>Visuals (read this first)</h3><div class="row">${d.visuals.map((v) => `<a class="btn" href="/visual/${esc(m.ticket)}/${esc(v.stage)}?t=${encodeURIComponent(TOKEN)}" target="_blank" rel="noopener">${esc(v.stage)} — what is the issue · what must be done · one example</a>`).join('')}</div><div class="muted">Rendered by the toolkit from the stage contract (${d.visuals.map((v) => esc(v.path)).join(', ')}).</div></div>` : ''}
         <div class="card"><h3>Vault files</h3><div class="row">${d.files.map((f) => `<button class="btn mono" data-file="${esc(f)}">${esc(f)}</button>`).join('') || '<span class="muted">empty</span>'}</div><pre id="file-view" hidden></pre></div>
         <div class="card"><h3>Recent events</h3><pre>${esc(d.events_tail.map((e) => `${e.ts.slice(11, 19)} ${e.type}${e.stage ? ' @' + e.stage : ''}${e.agent ? ' ' + e.agent : ''}${e.data ? ' ' + JSON.stringify(e.data).slice(0, 140) : ''}`).join('\n') || 'no events')}</pre></div>
       </div>`);

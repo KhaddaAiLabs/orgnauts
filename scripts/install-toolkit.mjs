@@ -28,6 +28,10 @@ const runOut = (cmd, args, opts = {}) => execFileSync(cmd, args, { cwd: repo, en
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 
 console.log(`Orgnauts toolkit install → ${home}`);
+if (!fs.existsSync(path.join(repo, "node_modules", "typescript"))) {
+  console.error(`install-toolkit: ${path.join(repo, "node_modules")} has no typescript — run \`npm ci\` in ${repo} first (or \`npm run setup\`, which does every step in order).`);
+  process.exit(1);
+}
 run(npm, ["run", "build"]);
 const packOut = runOut(npm, ["pack", "--json", "--pack-destination", os.tmpdir()]);
 const tgzName = JSON.parse(packOut)[0].filename;
@@ -56,4 +60,4 @@ if (!onPath) {
   console.log(`Add to your shell profile (needed for hooks + \`orgnauts\` on the command line):\n\n   export PATH="${bin}:$PATH"\n`);
   if (process.platform === "win32") console.log(`   (Windows: add ${bin} to the user PATH; hooks in .claude/settings.json use $HOME/.orgnauts/bin — Phase 4 verifies the shell used by Claude Code on Windows)`);
 }
-console.log("Next: orgnauts-human setup  →  orgnauts-human org login …  →  orgnauts-human doctor");
+console.log("Next: orgnauts-human setup --quick  →  orgnauts-human org login --alias <DevSandbox> --keychain agent  →  orgnauts-human doctor   (`npm run setup` runs all of this in order)");

@@ -1,0 +1,12 @@
+# knowledge/checklists/limits.yaml — governor cost and async identity, answered for 200 records in one transaction.
+name: limits
+items:
+  - id: LIM-1
+    question: For 200 records in one transaction, are the SOQL queries, DML statements, CPU time, heap, callouts and email invocations counted, and is the first limit to bind named?
+    applies_when: apex
+  - id: LIM-2
+    question: For every flow in scope, is the same 200-record cost stated (Get Records and DML elements outside loops, how many record-triggered flows share the object, their triggerOrder), and does each scheduled or async path name the user it will run as (the user whose change triggered the record)?
+    applies_when: flow
+  - id: LIM-3
+    question: For every Queueable, @future or Batch in scope, is the running identity stated? A Queueable runs as the user who enqueued it, so sharing and Named Credential access follow that user, not the record owner.
+    applies_when: apex

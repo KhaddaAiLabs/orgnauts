@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import fs from "node:fs";
-import { makeProject, cleanup, runHook, agentCli, writeJson, write } from "./helpers.mjs";
+import { makeProject, cleanup, runHook, agentCli, writeJson, write , VISUAL } from "./helpers.mjs";
 import { projectPaths } from "../dist/core/paths.js";
 import { loadManifest } from "../dist/core/manifest.js";
 import { buildContext, runGate } from "../dist/gates/registry.js";
@@ -26,7 +26,7 @@ test("/reject re-runs the stage with the reason; a later /approve advances", () 
     agentCli(root, ["handoff", T]); // → intake
     write(path.join(vault, "01-intake.md"), "# intake\n");
     write(path.join(vault, "ticket.md"), "x");
-    writeJson(path.join(vault, "01-intake.json"), { classification: "BUG", summary: "Critical web cases lose their owner when priority flips", acceptance_criteria: [{ id: "AC1", text: "owner is the regional queue", source: "ticket.md" }], scope: [{ type: "ApexClass", api_name: "X", evidence: { source: "vault", ref: "ticket.md" } }], objects: ["Case"], touches: ["apex"], suggested_tier: "HIGH", keywords: [], questions: [] });
+    writeJson(path.join(vault, "01-intake.json"), { classification: "BUG", summary: "Critical web cases lose their owner when priority flips", acceptance_criteria: [{ id: "AC1", text: "owner is the regional queue", source: "ticket.md" }], scope: [{ type: "ApexClass", api_name: "X", evidence: { source: "vault", ref: "ticket.md" } }], objects: ["Case"], touches: ["apex"], suggested_tier: "HIGH", keywords: [], questions: [], visual: VISUAL });
     runHook(root, "stage-gate", { hook_event_name: "SubagentStop", agent_type: "a1-intake" });
     let out = agentCli(root, ["handoff", T]).stdout; assert.match(out, /WAIT_HUMAN \(approval\) at stage "intake"/);
     const h = runHook(root, "prompt-router", { hook_event_name: "UserPromptSubmit", prompt: `/reject ${T} --reason "scope misses the trigger"`, agent_type: "conductor" });
@@ -55,7 +55,7 @@ test("support flow: specialist requests a UI observation → handoff spawns a8-u
     agentCli(root, ["handoff", T]);
     done("a1-intake", { "00c-prior-art.md": "# x\n", "00c-prior-art.json": { ticket: T, related: [], tracker_hits: [], history: [], lessons: [], digest: [] } });
     write(path.join(vault, "ticket.md"), "x");
-    done("a1-intake", { "01-intake.md": "# x\n", "01-intake.json": { classification: "BUG", summary: "Screen flow hides the escalate button for support agents", acceptance_criteria: [{ id: "AC1", text: "owner is the regional queue", source: "ticket.md" }], scope: [{ type: "Flow", api_name: "Case_Escalate_Screen", evidence: { source: "vault", ref: "ticket.md" } }], objects: ["Case"], touches: ["flow", "ui"], suggested_tier: "LOW", keywords: [], questions: [] } });
+    done("a1-intake", { "01-intake.md": "# x\n", "01-intake.json": { classification: "BUG", summary: "Screen flow hides the escalate button for support agents", acceptance_criteria: [{ id: "AC1", text: "owner is the regional queue", source: "ticket.md" }], scope: [{ type: "Flow", api_name: "Case_Escalate_Screen", evidence: { source: "vault", ref: "ticket.md" } }], objects: ["Case"], touches: ["flow", "ui"], suggested_tier: "LOW", keywords: [], questions: [], visual: VISUAL } });
     // MEDIUM tier (flow) → intake auto → baseline
     done("a0b-baseline", { "00b-baseline.md": "# b\n", "00b-baseline.json": { synced_at: "x", ancestor_source: "fingerprint", scope: [], components: [], excluded: [], stopped: false } });
     done("a0-cartographer", { "00d-cartography.md": "# m\n", "00d-cartography.json": { objects: [], automation: [], consumers: [], drift: [], unknowns: [] } });

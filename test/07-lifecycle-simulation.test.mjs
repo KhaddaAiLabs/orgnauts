@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
-import { makeProject, cleanup, runHook, agentCli, humanCli, writeJson, write, readJson } from "./helpers.mjs";
+import { makeProject, cleanup, runHook, agentCli, humanCli, writeJson, write, readJson , VISUAL } from "./helpers.mjs";
 import { projectPaths } from "../dist/core/paths.js";
 import { loadManifest } from "../dist/core/manifest.js";
 import { buildContext } from "../dist/gates/registry.js";
@@ -42,7 +42,7 @@ test("DEMO-101 travels open → prior_art → intake → baseline → cartograph
 
     // intake: HIGH tier (Apex + permissions) → human gate asks
     write(path.join(vault, "01-intake.md"), "# intake\n");
-    writeJson(path.join(vault, "01-intake.json"), { classification: "BUG", summary: "Critical web cases lose their owner when priority flips to Critical after the last release", acceptance_criteria: [{ id: "AC1", text: "Critical web cases are owned by the regional escalation queue", source: "ticket.md" }, { id: "AC2", text: "Non-critical cases keep their owner", source: "ticket.md" }], scope: [{ type: "ApexClass", api_name: "CaseEscalationOwnerService", evidence: ev() }, { type: "ApexTrigger", api_name: "CaseTrigger", evidence: ev() }], objects: ["Case"], touches: ["apex", "email"], suggested_tier: "MEDIUM", keywords: ["escalation", "owner", "critical"], questions: [] });
+    writeJson(path.join(vault, "01-intake.json"), { classification: "BUG", summary: "Critical web cases lose their owner when priority flips to Critical after the last release", acceptance_criteria: [{ id: "AC1", text: "Critical web cases are owned by the regional escalation queue", source: "ticket.md" }, { id: "AC2", text: "Non-critical cases keep their owner", source: "ticket.md" }], scope: [{ type: "ApexClass", api_name: "CaseEscalationOwnerService", evidence: ev() }, { type: "ApexTrigger", api_name: "CaseTrigger", evidence: ev() }], objects: ["Case"], touches: ["apex", "email"], suggested_tier: "MEDIUM", keywords: ["escalation", "owner", "critical"], questions: [], visual: VISUAL });
     s = stop("a1-intake"); assert.equal(s.json, undefined, s.stdout);
     let m = loadManifest(T, p); assert.equal(m.tier, "HIGH", "risk-floor raised MEDIUM → HIGH (apex + email)");
     out = handoff(); assert.match(out, /ACTION: WAIT_HUMAN \(approval\) at stage "intake"/);
@@ -81,7 +81,7 @@ test("DEMO-101 travels open → prior_art → intake → baseline → cartograph
     const yaml = (await import("yaml")).default;
     const answers = {};
     for (const f of fs.readdirSync(path.join(root, "knowledge/checklists"))) for (const it of yaml.parse(fs.readFileSync(path.join(root, "knowledge/checklists", f), "utf8")).items) answers[it.id] = { answer: "yes", note: "checked in plan" };
-    const plan = { root_cause: "CaseEscalationOwnerService.assignOwner reads Priority from Trigger.old instead of Trigger.new, so the flip is never seen.", confidence: 0.85, components: [{ type: "ApexClass", api_name: "CaseEscalationOwnerService", action: "modify", evidence: ev() }], fields: [{ object: "Case", api_name: "OwnerId", action: "write", evidence: ev() }], soql: ["SELECT Id FROM Case WHERE Priority = 'Critical'"], flows: [], api_version: "64.0", objects: ["Case"], touches: ["apex", "email"], tests: { existing: [], new: ["CaseEscalationOwnerAssignmentTest.ownerIsAssignedWhenPriorityBecomesCritical"], flow_tests: [], distribution: [] }, rollback: ["redeploy the previous CaseEscalationOwnerService version"], kill_switch: "Automation_Switch__mdt.CaseEscalation", remediation: { needed: false }, prod_verification: [], options: [{ name: "fix the read in the service", tradeoff: "smallest change", chosen: true }, { name: "move to before-save flow", tradeoff: "duplicates trigger logic" }], checklist_answers: answers, unknowns: [] };
+    const plan = { root_cause: "CaseEscalationOwnerService.assignOwner reads Priority from Trigger.old instead of Trigger.new, so the flip is never seen.", confidence: 0.85, components: [{ type: "ApexClass", api_name: "CaseEscalationOwnerService", action: "modify", evidence: ev() }], fields: [{ object: "Case", api_name: "OwnerId", action: "write", evidence: ev() }], soql: ["SELECT Id FROM Case WHERE Priority = 'Critical'"], flows: [], api_version: "64.0", objects: ["Case"], touches: ["apex", "email"], tests: { existing: [], new: ["CaseEscalationOwnerAssignmentTest.ownerIsAssignedWhenPriorityBecomesCritical"], flow_tests: [], distribution: [] }, rollback: ["redeploy the previous CaseEscalationOwnerService version"], kill_switch: "Automation_Switch__mdt.CaseEscalation", remediation: { needed: false }, prod_verification: [], options: [{ name: "fix the read in the service", tradeoff: "smallest change", chosen: true }, { name: "move to before-save flow", tradeoff: "duplicates trigger logic" }], checklist_answers: answers, unknowns: [], visual: VISUAL };
     write(path.join(vault, "03-plan.md"), "# plan\nChange CaseEscalationOwnerService.assignOwner to read Case.Priority from Trigger.new.\n");
     writeJson(path.join(vault, "03-plan.json"), plan);
     s = stop("a3-architect"); assert.equal(s.json, undefined, s.stdout);

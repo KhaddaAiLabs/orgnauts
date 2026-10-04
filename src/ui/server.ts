@@ -57,6 +57,17 @@ export async function startUi(opts: UiOptions = {}): Promise<{ url: string; clos
         res.writeHead(200, { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=86400" });
         return res.end(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#4f8cff"/><text x="16" y="21" font-family="monospace" font-size="14" font-weight="700" text-anchor="middle" fill="#fff">SF</text></svg>`);
       }
+      // D-107: the rendered stage visual (work/<KEY>/visuals/<stage>.html) opened in its own tab. Token travels as a query
+      // parameter here because a plain link cannot set the header; the page is static HTML from the vault and draws its
+      // diagrams with mermaid from cdnjs, so this ONE route relaxes script-src to that host — the app page keeps its CSP.
+      if (req.method === "GET" && /^\/visual\/[A-Z][A-Z0-9_]{0,15}-\d{1,8}\/(intake|plan)$/.test(url.pathname)) {
+        if (url.searchParams.get("t") !== token) throw new HttpError(401, "missing or wrong token — open the visual from the ticket page");
+        const [, , key, stage] = url.pathname.split("/");
+        const file = path.join(vaultDir(p, key), "visuals", `${stage}.html`);
+        if (!exists(file)) throw new HttpError(404, `no visual rendered yet for ${key} ${stage} (the visual-check gate renders it when the stage finishes)`);
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "X-Frame-Options": "DENY", "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" });
+        return res.end(fs.readFileSync(file));
+      }
       if (url.pathname.startsWith("/api/")) {
         if (req.headers["x-orgnauts-token"] !== token) throw new HttpError(401, "missing or wrong token — reopen the URL printed by `orgnauts-human ui`");
         const body = req.method === "GET" ? undefined : await readBody(req);
@@ -202,7 +213,9 @@ function ticketDetail(p: ProjectPaths, key: string) {
   // D-094: the budget is judged on FRESH tokens (input + output + cache writes); the total includes cache re-reads — show both
   const byAgent: Record<string, { tokens: number; fresh: number; runs: number; usd: number }> = {};
   for (const r of runs) { const a = (byAgent[r.agent] ??= { tokens: 0, fresh: 0, runs: 0, usd: 0 }); a.tokens += r.total_tokens; a.fresh += r.fresh_tokens ?? freshTokens(r.usage); a.runs++; a.usd += r.usd ?? 0; }
-  return { manifest: m, files, stage_defs: STAGES.map((s) => ({ id: s.id, agent: s.agent, kind: s.kind, gates: s.gates, human_gate: s.human_gate, optional: s.optional })), tokens_by_agent: byAgent, events_tail: readEvents(key, p).slice(-40) };
+  const visualsDir = path.join(vault, "visuals");
+  const visuals = exists(visualsDir) ? fs.readdirSync(visualsDir).filter((f) => f.endsWith(".html")).sort().map((f) => ({ stage: f.replace(/\.html$/, ""), path: path.relative(p.root, path.join(visualsDir, f)) })) : [];
+  return { manifest: m, files, visuals, stage_defs: STAGES.map((s) => ({ id: s.id, agent: s.agent, kind: s.kind, gates: s.gates, human_gate: s.human_gate, optional: s.optional })), tokens_by_agent: byAgent, events_tail: readEvents(key, p).slice(-40) };
 }
 
 function dashboard(p: ProjectPaths) {

@@ -1,0 +1,29 @@
+# knowledge/checklists/deployment.yaml — what breaks between "deploy succeeded" and "it works for users".
+# The plan (03-plan.json → checklist_answers) answers every applicable item; the deploy brief (06b) turns every "yes" into a
+# by-hand step for the human, per org. applies_when: always | apex | flow | data | email | ui | permissions | sharing | integration | reports | lwc | validation | scheduling
+name: deployment
+items:
+  - id: DEP-1
+    question: Does every new or changed field ship with a permission set (or the profile change the plan names) that grants FLS? A field deploy alone grants FLS to nobody, not even System Administrator.
+    applies_when: always
+  - id: DEP-2
+    question: For every permission set in the change, does the brief say WHO is assigned it after deploy? A PermissionSet deploys with 0 assignees.
+    applies_when: permissions
+  - id: DEP-3
+    question: If a UserAccessPolicy is used, does the brief say it deploys with status Design and must be Activated and then Applied to all existing users by hand, in every org?
+    applies_when: permissions
+  - id: DEP-4
+    question: Is flow activation planned per org (a deployed version may land as Draft; activate via FlowDefinition.activeVersionNumber or Flow Builder), and is the 50-version headroom of each flow definition checked?
+    applies_when: flow
+  - id: DEP-5
+    question: If a profile is in the package, does a profile of that name exist in the target org? A profile overlay deploy creates a Minimum Access profile when the name is absent.
+    applies_when: permissions
+  - id: DEP-6
+    question: Are all environment-specific ids inside flows, custom metadata, layouts and code listed for re-pointing per org (email templates, queues, org-wide email addresses, record types, custom metadata record ids)? A wrong id deploys green and fails silently at runtime.
+    applies_when: always
+  - id: DEP-7
+    question: For every Named Credential callout, do the calling users have the External Credential principal access AND object Read on UserExternalCredential?
+    applies_when: integration
+  - id: DEP-8
+    question: Is every new or changed Lightning page (FlexiPage) activated and assigned (app, record type, profile) in the target org, and does the brief name that assignment?
+    applies_when: ui
