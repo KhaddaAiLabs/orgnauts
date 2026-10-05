@@ -17,7 +17,8 @@
     "prod_verification",
     "options",
     "checklist_answers",
-    "unknowns"
+    "unknowns",
+    "visual"
   ],
   "properties": {
     "root_cause": {
@@ -366,6 +367,140 @@
         "$ref": "#/$defs/evidence"
       },
       "minItems": 0
+    },
+    "visual": {
+      "type": "object",
+      "description": "D-107: rendered by the toolkit to work/<KEY>/visuals/<stage>.html so anyone can read what the issue is and what must be done.",
+      "required": [
+        "issue",
+        "fix",
+        "example",
+        "mermaid"
+      ],
+      "properties": {
+        "issue": {
+          "type": "object",
+          "required": [
+            "headline",
+            "steps",
+            "where_it_breaks"
+          ],
+          "properties": {
+            "headline": {
+              "type": "string",
+              "minLength": 10,
+              "maxLength": 200
+            },
+            "steps": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 12,
+              "items": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 400
+              }
+            },
+            "where_it_breaks": {
+              "type": "string",
+              "minLength": 10,
+              "maxLength": 600
+            }
+          }
+        },
+        "fix": {
+          "type": "object",
+          "required": [
+            "headline",
+            "steps"
+          ],
+          "properties": {
+            "headline": {
+              "type": "string",
+              "minLength": 10,
+              "maxLength": 200
+            },
+            "steps": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 12,
+              "items": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 400
+              }
+            }
+          }
+        },
+        "example": {
+          "type": "object",
+          "required": [
+            "record",
+            "today",
+            "expected"
+          ],
+          "properties": {
+            "record": {
+              "type": "string",
+              "minLength": 5,
+              "maxLength": 600
+            },
+            "today": {
+              "type": "string",
+              "minLength": 5,
+              "maxLength": 600
+            },
+            "expected": {
+              "type": "string",
+              "minLength": 5,
+              "maxLength": 600
+            }
+          }
+        },
+        "mermaid": {
+          "type": "object",
+          "required": [
+            "issue",
+            "fix"
+          ],
+          "properties": {
+            "issue": {
+              "type": "string",
+              "minLength": 20,
+              "maxLength": 4000
+            },
+            "fix": {
+              "type": "string",
+              "minLength": 20,
+              "maxLength": 4000
+            }
+          }
+        },
+        "glossary": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "term",
+              "meaning"
+            ],
+            "properties": {
+              "term": {
+                "type": "string"
+              },
+              "meaning": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "open_questions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
     }
   },
   "additionalProperties": true,

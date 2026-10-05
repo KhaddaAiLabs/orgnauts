@@ -25,12 +25,14 @@ export interface StageDef {
 
 export const STAGES: StageDef[] = [
   { id: "open",        title: "Open",            kind: "toolkit", gates: [] },
-  { id: "prior_art",   title: "Prior Art",       kind: "agent", agent: "a1-intake",        gates: ["contract-check"], output: "00c-prior-art.md" },
-  { id: "intake",      title: "Intake",          kind: "agent", agent: "a1-intake",        gates: ["contract-check", "risk-floor"], human_gate: "intake", output: "01-intake.md" },
+  // D-105: `ticket-import` refuses to pass the stage while the vault still holds the MCP stub (a1 must import the real ticket first)
+  { id: "prior_art",   title: "Prior Art",       kind: "agent", agent: "a1-intake",        gates: ["ticket-import", "contract-check"], output: "00c-prior-art.md" },
+  // D-107: `visual-check` renders work/<KEY>/visuals/intake.html from the contract's `visual` block (issue · what to do · example)
+  { id: "intake",      title: "Intake",          kind: "agent", agent: "a1-intake",        gates: ["contract-check", "risk-floor", "visual-check"], human_gate: "intake", output: "01-intake.md" },
   { id: "baseline",    title: "Baseline Sync",   kind: "agent", agent: "a0b-baseline",     gates: ["baseline-check"], output: "00b-baseline.md" },
   { id: "cartography", title: "Cartography",     kind: "agent", agent: "a0-cartographer",  gates: ["contract-check"], output: "00d-cartography.md" },
   { id: "repro",       title: "Reproduce",       kind: "agent", agent: "a2-repro",         gates: ["email-guard", "naming-lint", "assertion-referee", "contract-check"], output: "02-repro.md" },
-  { id: "plan",        title: "Plan",            kind: "agent", agent: "a3-architect",     gates: ["plan-lint", "semantic-check", "checklist", "contract-check"], human_gate: "plan", output: "03-plan.md" },
+  { id: "plan",        title: "Plan",            kind: "agent", agent: "a3-architect",     gates: ["plan-lint", "semantic-check", "checklist", "contract-check", "visual-check"], human_gate: "plan", output: "03-plan.md" },
   { id: "develop",     title: "Develop",         kind: "agent", agent: "a4-developer",     gates: ["comment-lint", "naming-lint", "plan-lint", "deploy-report", "contract-check"], output: "04-implementation.md" },
   { id: "qa_dev",      title: "QA (Dev)",        kind: "agent", agent: "a5-qa",            gates: ["assertion-referee", "test-quality", "contract-check"], output: "05-test-report.md" },
   { id: "review",      title: "Review",          kind: "agent", agent: "a6-reviewer",      gates: ["security", "contract-check"], human_gate: "review", output: "06-review.md" },
@@ -93,14 +95,31 @@ export function allowedAgentsFor(stageId: string): string[] {
   return out;
 }
 
+/**
+ * Does the system stop for the human after this stage?
+ *   always_human stages (deploys, remediation) → ask, whatever is configured (hard floor).
+ *   D-106: the per-agent switch in config/autonomy.yaml → agents decides first:
+ *     ask     → stop after this agent's stage, every time
+ *     auto    → never stop here
+ *     inherit → fall back to the tier matrix (tiers.<TIER>.human_gates.<stage>), auto when the stage has no gate key
+ */
 export function humanGateMode(m: Manifest, s: StageDef, cfg: AllConfig): "ask" | "auto" {
   if (s.always_human) return "ask";
+  const perAgent = s.agent ? cfg.autonomy.agents?.[s.agent] : undefined;
+  if (perAgent === "ask" || perAgent === "auto") return perAgent;
   const tier = (m.tier === "UNSET" ? "HIGH" : m.tier) as CfgTier; // unknown tier = most careful
-  let mode: "ask" | "auto" = "auto";
-  if (s.human_gate) mode = cfg.autonomy.tiers[tier]?.human_gates?.[s.human_gate] ?? "ask";
-  // per-agent overlay from the UI (Agents screen): "Ask before proceeding" wins over tier matrix
-  if (s.agent && cfg.autonomy.agents?.[s.agent] === "ask") mode = "ask";
-  return mode;
+  if (s.human_gate) return cfg.autonomy.tiers[tier]?.human_gates?.[s.human_gate] ?? "ask";
+  return "auto";
+}
+
+/** Why the system stopped (or did not) after an agent stage — shown to the human so the setting is discoverable. */
+export function humanGateReason(m: Manifest, s: StageDef, cfg: AllConfig): string {
+  if (s.always_human) return "hard floor: deploys and remediation are always yours";
+  const perAgent = s.agent ? cfg.autonomy.agents?.[s.agent] : undefined;
+  if (perAgent === "ask" || perAgent === "auto") return `config/autonomy.yaml → agents.${s.agent}: ${perAgent}`;
+  const tier = m.tier === "UNSET" ? "HIGH" : m.tier;
+  if (s.human_gate) return `tier ${tier} matrix (autonomy.yaml → tiers.${tier}.human_gates.${s.human_gate}); per-agent override: orgnauts-human autonomy set ${s.agent} ask|auto`;
+  return `no human gate for ${s.id} (per-agent override: orgnauts-human autonomy set ${s.agent} ask)`;
 }
 
 /**
@@ -288,7 +307,7 @@ export function decideHandoff(m: Manifest, cfg: AllConfig): HandoffResult {
     // human stages (deploys, remediation) are marked done BY the human — that mark is the approval
     if (cur.kind !== "human" && humanGateMode(m, cur, cfg) === "ask" && !hasApproval(m, cur.id)) {
       m.status = "waiting_human";
-      m.waiting = { kind: "approval", stage: cur.id, prompt: approvalPrompt(m, cur), since: nowIso() };
+      m.waiting = { kind: "approval", stage: cur.id, prompt: approvalPrompt(m, cur, cfg), since: nowIso() };
       return { decision: { action: "WAIT_HUMAN", stage: cur.id, kind: "approval", prompt: m.waiting.prompt }, manifest: m, notes };
     }
     m.waiting = null;
@@ -310,10 +329,14 @@ function toolkitVerb(stage: string): string {
   }
 }
 
-function approvalPrompt(m: Manifest, s: StageDef): string {
+/** Stages whose contract carries a `visual` block rendered to work/<KEY>/visuals/<stage>.html (D-107). */
+export const VISUAL_STAGES = ["intake", "plan"] as const;
+
+function approvalPrompt(m: Manifest, s: StageDef, cfg: AllConfig): string {
   const out = s.output ? `work/${m.ticket}/${s.output}` : `work/${m.ticket}/`;
+  const visual = (VISUAL_STAGES as readonly string[]).includes(s.id) ? ` Visual (open in a browser): work/${m.ticket}/visuals/${s.id}.html.` : "";
   const typed = m.tier === "HIGH" && s.id === "plan" ? " HIGH tier: typed answer required (--answer \"...\")." : "";
-  return `Stage "${s.title}" finished. Review ${out} then: /approve ${m.ticket} --stage ${s.id} [--answer "..."]  or  /reject ${m.ticket} --stage ${s.id} --reason "...".${typed}`;
+  return `Stage "${s.title}" finished. Review ${out}.${visual} Then: /approve ${m.ticket} --stage ${s.id} [--answer "..."]  or  /reject ${m.ticket} --stage ${s.id} --reason "...".${typed} (Stopped because: ${humanGateReason(m, s, cfg)}.)`;
 }
 
 function startStage(m: Manifest, cfg: AllConfig, s: StageDef, notes: string[]): HandoffResult {

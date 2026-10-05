@@ -14,10 +14,13 @@ import { backfillTicketBudget } from "./tokens.js";
 import { setActiveTicket } from "../core/session.js";
 import { orgDisplay } from "../core/sf.js";
 import { ensureDir, exists, nowIso, readJsonOr, readTextOr, tsCompact, writeJsonAtomic, writeTextAtomic, OrgnautsError } from "../core/util.js";
-import { trackerFor, type TicketSnapshot } from "./tracker/index.js";
+import { trackerFor, describeTracker, snapshotFromImport, extractAcceptanceCriteria, type TicketSnapshot, type TicketImportInput } from "./tracker/index.js";
+import { trackerMcp } from "../core/config.js";
+import { validateNamed } from "../core/schema.js";
 import { runBaseline } from "./baseline.js";
 import { buildPriorArt } from "./priorart.js";
 import { notify } from "./notify.js";
+import { clearUiAllowHosts } from "./uihosts.js";
 
 export interface OpenResult { manifest: Manifest; created: boolean; ticket: TicketSnapshot; notes: string[] }
 
@@ -37,18 +40,27 @@ export async function openTicket(key: string, opts: { restart?: boolean; p?: Pro
   }
   if (existing && opts.restart) archiveVault(p, ticket, existing, "restart requested");
 
-  const tracker = trackerFor(cfg);
+  const tracker = trackerFor(cfg, process.env, p);
   const snap = await tracker.fetch(ticket);
-  for (const d of ["00-inbox", "evidence", "artifacts/test-data", "artifacts/remediation", "validations", "approvals", "10-comms", "history"]) ensureDir(path.join(vault, d));
+  for (const d of ["00-inbox", "evidence", "artifacts/test-data", "artifacts/remediation", "validations", "approvals", "10-comms", "visuals", "history"]) ensureDir(path.join(vault, d));
   writeJsonAtomic(path.join(vault, "ticket.json"), snap);
   writeTextAtomic(path.join(vault, "ticket.md"), renderTicket(snap));
   const m = existing?.history?.length ? { ...newManifest(ticket, tracker.name, snap.title), history: existing.history } : newManifest(ticket, tracker.name, snap.title);
   if (opts.sessionId) m.session_ids.push(opts.sessionId);
-  // dev org identity (sandbox refresh detection on resume)
+  // D-105: with the MCP adapter the toolkit cannot fetch — the a1-intake agent imports the ticket at prior_art
+  if (snap.pending_import) {
+    m.flags["ticket_import_pending"] = true;
+    notes.push(`ticket not fetched yet (tracker ${describeTracker(cfg)}): the a1-intake agent imports it through the MCP server at the prior_art stage — or drop inbox/${ticket}.md and re-open`);
+  }
+  // dev org identity (sandbox refresh detection on resume). ORGNAUTS_OFFLINE=1 (tests, demos without an org) skips the
+  // sf call instead of waiting ~20 s for "No authorization information found" (v0.3.0: `npm test` is offline for real).
   const dev = devOrg(cfg);
-  const disp = await orgDisplay(dev.alias, "agent");
-  if (disp.ok && disp.data?.id) m.fingerprints.dev = disp.data.id;
-  else notes.push(`could not read ${dev.alias} org id (${disp.error ?? "unknown"}) — sandbox-refresh detection disabled for this ticket`);
+  if (process.env.ORGNAUTS_OFFLINE === "1") notes.push(`offline mode — ${dev.alias} org id not read; sandbox-refresh detection disabled for this ticket`);
+  else {
+    const disp = await orgDisplay(dev.alias, "agent");
+    if (disp.ok && disp.data?.id) m.fingerprints.dev = disp.data.id;
+    else notes.push(`could not read ${dev.alias} org id (${disp.error ?? "unknown"}) — sandbox-refresh detection disabled for this ticket`);
+  }
   // facts.md skeleton (human/agent shared notes; agents append, toolkit owns the header)
   if (!exists(path.join(vault, "facts.md"))) writeTextAtomic(path.join(vault, "facts.md"), `# facts — ${ticket}\n\nShort, verified facts about this ticket (one per line, with source). Agents append; toolkit refreshes the header on compaction.\n\n- opened ${nowIso()} · tracker ${tracker.name} · title: ${snap.title}\n`);
   stageRecord(m, "open").status = "done";
@@ -57,15 +69,101 @@ export async function openTicket(key: string, opts: { restart?: boolean; p?: Pro
   m.stage = "open";
   saveManifest(m, p);
   setActiveTicket(ticket, p);
-  emitEvent({ ticket, type: existing ? "ticket.restarted" : "ticket.opened", stage: "open", data: { title: snap.title, tracker: tracker.name, restart: !!opts.restart } }, p);
-  // prior-art index query (toolkit part; A1 reads and digests)
-  try {
-    const pa = await buildPriorArt(ticket, { p, cfg, snapshot: snap });
-    notes.push(`prior art: ${pa.related.length} related ticket(s), ${pa.history.length} history hit(s)`);
-  } catch (e) {
-    notes.push(`prior-art index skipped: ${(e as Error).message}`);
+  emitEvent({ ticket, type: existing ? "ticket.restarted" : "ticket.opened", stage: "open", data: { title: snap.title, tracker: tracker.name, imported_via: snap.imported_via, pending_import: !!snap.pending_import, restart: !!opts.restart } }, p);
+  // prior-art index query (toolkit part; A1 reads and digests) — with a stub there is nothing to index yet (import does it)
+  if (!snap.pending_import) {
+    try {
+      const pa = await buildPriorArt(ticket, { p, cfg, snapshot: snap });
+      notes.push(`prior art: ${pa.related.length} related ticket(s), ${pa.history.length} history hit(s)`);
+    } catch (e) {
+      notes.push(`prior-art index skipped: ${(e as Error).message}`);
+    }
   }
   return { manifest: m, created: true, ticket: snap, notes };
+}
+
+export interface ImportResult { manifest: Manifest; ticket: TicketSnapshot; diff?: { cls: DiffClass; changes: string[] }; actions: string[]; first: boolean }
+
+/**
+ * D-105 — `orgnauts agent ticket import <KEY> --file work/<KEY>/00-inbox/ticket-import.json`.
+ * The a1-intake agent fetched the ticket through the tracker's MCP server and saved the result as JSON; the toolkit
+ * validates it, wraps it in the untrusted envelope, writes ticket.json/ticket.md and indexes prior art. Re-importing an
+ * already-imported ticket is a refresh: the same diff classification as `/resume` applies (comments only → note;
+ * description/AC changed → back to intake; closed in the tracker → done).
+ */
+export async function importTicket(key: string, file: string, opts: { p?: ProjectPaths; hitsFile?: string } = {}): Promise<ImportResult> {
+  const p = opts.p ?? projectPaths();
+  const cfg = loadConfig(p);
+  const m = loadManifest(key, p);
+  const vault = vaultDir(p, m.ticket);
+  const abs = path.isAbsolute(file) ? file : path.resolve(p.root, file);
+  if (!abs.startsWith(vault + path.sep)) throw new OrgnautsError(`ticket import: the file must live inside the ticket vault (work/${m.ticket}/…), got ${file}`, "IMPORT_PATH");
+  if (!exists(abs)) throw new OrgnautsError(`ticket import: file not found: ${file}`, "IMPORT_PATH");
+  let raw: unknown;
+  try { raw = JSON.parse(fs.readFileSync(abs, "utf8")); } catch (e) { throw new OrgnautsError(`ticket import: ${file} is not valid JSON: ${(e as Error).message}`, "IMPORT_INVALID"); }
+  const errors = validateNamed("contracts/ticket-import", raw);
+  if (errors.length) throw new OrgnautsError(`ticket import: ${file} fails schema contracts/ticket-import:\n  - ${errors.slice(0, 10).join("\n  - ")}`, "IMPORT_INVALID", { errors });
+  const server = cfg.tracker.adapter === "mcp" ? trackerMcp(cfg).server : cfg.tracker.adapter;
+  const snap = snapshotFromImport(m.ticket, raw as TicketImportInput, server, extractAcceptanceCriteria);
+  const before = readJsonOr<TicketSnapshot | undefined>(path.join(vault, "ticket.json"), undefined);
+  const first = !before || before.pending_import === true;
+  const actions: string[] = [];
+  let diff: { cls: DiffClass; changes: string[] } | undefined;
+  if (!first && before) {
+    diff = classifyTicketDiff(before, snap);
+    writeTextAtomic(path.join(vault, "ticket-diff.md"), renderDiff(m.ticket, diff, before, snap));
+    if (diff.cls !== "NONE") emitEvent({ ticket: m.ticket, type: "tracker.changed", stage: m.stage, data: { ...diff, via: "import" } }, p);
+  }
+  writeJsonAtomic(path.join(vault, "ticket.json"), snap);
+  writeTextAtomic(path.join(vault, "ticket.md"), renderTicket(snap));
+  m.title = snap.title;
+  m.flags["ticket_import_pending"] = false;
+  if (!first && diff) {
+    const r = applyTrackerDiff(m, vault, diff, p);
+    actions.push(...r.actions);
+    if (r.closed) { saveManifest(m, p); releaseLocks(m.ticket, {}, p); return { manifest: m, ticket: snap, diff, actions, first }; }
+  } else {
+    actions.push(`ticket imported via ${snap.imported_via} — "${snap.title}" (${snap.comments.length} comment(s), ${snap.attachments.length} attachment(s))`);
+  }
+  saveManifest(m, p);
+  emitEvent({ ticket: m.ticket, type: "ticket.imported", stage: m.stage, data: { via: snap.imported_via, title: snap.title, first, diff: diff?.cls } }, p);
+  try {
+    const pa = await buildPriorArt(m.ticket, { p, cfg, snapshot: snap, hitsFile: opts.hitsFile });
+    actions.push(`prior art indexed: ${pa.related.length} related vault(s), ${pa.tracker_hits.length} tracker hit(s), ${pa.history.length} git commit(s)`);
+  } catch (e) {
+    actions.push(`prior-art index skipped: ${(e as Error).message}`);
+  }
+  return { manifest: m, ticket: snap, diff, actions, first };
+}
+
+/** What a tracker change means for a ticket in flight (shared by /resume and a re-import). */
+export function applyTrackerDiff(m: Manifest, vault: string, diff: { cls: DiffClass; changes: string[] }, p: ProjectPaths): { actions: string[]; closed: boolean } {
+  const actions: string[] = [];
+  switch (diff.cls) {
+    case "NONE": actions.push("no tracker changes — continue from " + m.stage); break;
+    case "COMMENTS_ONLY":
+      fs.appendFileSync(path.join(vault, "facts.md"), `\n- ${nowIso()} tracker comments changed (${diff.changes.join(", ")}) — see ticket-diff.md\n`);
+      actions.push("comments changed → summary appended to facts.md, continue");
+      break;
+    case "DESCRIPTION_AC":
+      if (stageIndex(m.stage) > stageIndex("intake")) { restartFrom(m, "intake", `tracker description/acceptance changed: ${diff.changes.join(", ")}`); actions.push("description/AC changed → re-intake (later outputs archived to history/)"); }
+      else actions.push("description changed before intake finished — intake will read the new snapshot");
+      break;
+    case "SCOPE_CHANGED":
+      if (stageIndex(m.stage) > stageIndex("intake")) { restartFrom(m, "intake", `tracker components changed: ${diff.changes.join(", ")}`); }
+      m.flags["baseline_resync_required"] = true;
+      actions.push("scope changed → re-intake + baseline re-sync");
+      break;
+    case "CANCELLED_DONE":
+      m.status = "done";
+      m.stage = "done";
+      m.next_allowed_stages = [];
+      fs.appendFileSync(path.join(vault, "facts.md"), `\n- ${nowIso()} ticket closed in tracker (${diff.changes.join(", ")}) — vault archived as done\n`);
+      emitEvent({ ticket: m.ticket, type: "ticket.done", stage: "done", data: { reason: "closed in tracker" } }, p);
+      actions.push("ticket closed in tracker → done");
+      return { actions, closed: true };
+  }
+  return { actions, closed: false };
 }
 
 export function renderTicket(s: TicketSnapshot): string {
@@ -112,6 +210,7 @@ export function holdTicket(key: string, reason: string, p: ProjectPaths = projec
   m.held = { at: nowIso(), reason };
   m.next_allowed_stages = [];
   releaseLocks(m.ticket, { soft: true }, p);
+  clearUiAllowHosts(p, m.ticket); // D-109
   saveManifest(m, p);
   emitEvent({ ticket: m.ticket, type: "ticket.held", stage: m.stage, data: { reason } }, p);
   return m;
@@ -200,17 +299,23 @@ export async function resumeTicket(key: string, opts: { restartFrom?: string; p?
   const before = readJsonOr<TicketSnapshot | undefined>(path.join(vault, "ticket.json"), undefined);
   if (!before) throw new OrgnautsError("vault has no ticket.json", "VAULT_CORRUPT");
 
-  // 1. tracker re-fetch + diff
+  // 1. tracker re-fetch + diff (the MCP adapter cannot re-fetch: it returns the stored snapshot, so the diff is NONE;
+  //    a1-intake refreshes it with `orgnauts agent ticket import` on its next spawn when the stage note asks for it)
   let diff: { cls: DiffClass; changes: string[] } = { cls: "NONE", changes: [] };
-  try {
-    const after = await trackerFor(cfg).fetch(m.ticket);
-    diff = classifyTicketDiff(before, after);
-    writeTextAtomic(path.join(vault, "ticket-diff.md"), renderDiff(m.ticket, diff, before, after));
-    writeJsonAtomic(path.join(vault, "ticket.json"), after);
-    writeTextAtomic(path.join(vault, "ticket.md"), renderTicket(after));
-    if (diff.cls !== "NONE") emitEvent({ ticket: m.ticket, type: "tracker.changed", stage: m.stage, data: diff }, p);
-  } catch (e) {
-    actions.push(`tracker re-fetch failed (${(e as Error).message}) — resuming with the stored snapshot`);
+  const inboxFile = exists(path.join(p.root, "inbox", `${m.ticket}.md`)) || exists(path.join(p.root, "inbox", `${m.ticket}.json`));
+  if (cfg.tracker.adapter === "mcp" && !inboxFile) {
+    actions.push("tracker snapshot not re-fetched (MCP adapter: the toolkit holds no tracker credential) — the intake agent re-imports it on its next run; to force it now: orgnauts agent ticket import " + m.ticket + " --file work/" + m.ticket + "/00-inbox/ticket-import.json");
+  } else {
+    try {
+      const after = await trackerFor(cfg, process.env, p).fetch(m.ticket);
+      diff = classifyTicketDiff(before, after);
+      writeTextAtomic(path.join(vault, "ticket-diff.md"), renderDiff(m.ticket, diff, before, after));
+      writeJsonAtomic(path.join(vault, "ticket.json"), after);
+      writeTextAtomic(path.join(vault, "ticket.md"), renderTicket(after));
+      if (diff.cls !== "NONE") emitEvent({ ticket: m.ticket, type: "tracker.changed", stage: m.stage, data: diff }, p);
+    } catch (e) {
+      actions.push(`tracker re-fetch failed (${(e as Error).message}) — resuming with the stored snapshot`);
+    }
   }
 
   // 2. classify → action
@@ -218,35 +323,18 @@ export async function resumeTicket(key: string, opts: { restartFrom?: string; p?
     restartFrom(m, opts.restartFrom, `human: restart from ${opts.restartFrom}`);
     actions.push(`restart from ${opts.restartFrom}`);
   } else {
-    switch (diff.cls) {
-      case "NONE": actions.push("no tracker changes — continue from " + m.stage); break;
-      case "COMMENTS_ONLY":
-        fs.appendFileSync(path.join(vault, "facts.md"), `\n- ${nowIso()} resume: tracker comments changed (${diff.changes.join(", ")}) — see ticket-diff.md\n`);
-        actions.push("comments changed → summary appended to facts.md, continue");
-        break;
-      case "DESCRIPTION_AC":
-        if (stageIndex(m.stage) > stageIndex("intake")) { restartFrom(m, "intake", `tracker description/acceptance changed: ${diff.changes.join(", ")}`); actions.push("description/AC changed → re-intake (later outputs archived to history/)"); }
-        else actions.push("description changed before intake finished — intake will read the new snapshot");
-        break;
-      case "SCOPE_CHANGED":
-        if (stageIndex(m.stage) > stageIndex("intake")) { restartFrom(m, "intake", `tracker components changed: ${diff.changes.join(", ")}`); }
-        m.flags["baseline_resync_required"] = true;
-        actions.push("scope changed → re-intake + baseline re-sync");
-        break;
-      case "CANCELLED_DONE":
-        m.status = "done";
-        m.stage = "done";
-        m.next_allowed_stages = [];
-        fs.appendFileSync(path.join(vault, "facts.md"), `\n- ${nowIso()} ticket closed in tracker (${diff.changes.join(", ")}) — vault archived as done\n`);
-        saveManifest(m, p);
-        releaseLocks(m.ticket, {}, p);
-        emitEvent({ ticket: m.ticket, type: "ticket.done", stage: "done", data: { reason: "closed in tracker" } }, p);
-        return { manifest: m, diff, actions: [...actions, "ticket closed in tracker → done"] };
+    const r = applyTrackerDiff(m, vault, diff, p);
+    actions.push(...r.actions);
+    if (r.closed) {
+      saveManifest(m, p);
+      releaseLocks(m.ticket, {}, p);
+      return { manifest: m, diff, actions };
     }
   }
 
-  // 3. org checks: sandbox refresh
+  // 3. org checks: sandbox refresh (skipped in ORGNAUTS_OFFLINE=1)
   try {
+    if (process.env.ORGNAUTS_OFFLINE === "1") throw new Error("offline");
     const disp = await orgDisplay(devOrg(cfg).alias, "agent");
     if (disp.ok && disp.data?.id && m.fingerprints.dev && disp.data.id !== m.fingerprints.dev) {
       actions.push(`development org id changed (${m.fingerprints.dev} → ${disp.data.id}) — sandbox refreshed: repro must be redone, baseline re-sync required`);
@@ -337,6 +425,7 @@ export async function markDeployed(key: string, orgRole: "preprod" | "production
   stageRecord(m, stage).note = `marked deployed by human${opts.deployId ? ` (deploy ${opts.deployId})` : ""}`;
   if (m.waiting?.kind === "deploy") { m.waiting = null; m.status = "running"; }
   saveManifest(m, p);
+  if (orgRole === "production") clearUiAllowHosts(p, m.ticket); // D-109: qa_uat is over — close the preprod browser window
   emitEvent({ ticket: m.ticket, type: "deploy.marked", stage, data: { org: orgRole, deployId: opts.deployId } }, p);
   return m;
 }
@@ -404,5 +493,6 @@ export function readFacts(p: ProjectPaths, ticket: string): string {
 }
 
 export function configSnapshotForPrompt(cfg: AllConfig): string {
-  return `dev=${devOrg(cfg).alias} preprod=${cfg.orgs.orgs.find((o) => o.role === "preprod")?.alias ?? "none"} evidence=${evidenceOrg(cfg)?.alias ?? "none"} tracker=${cfg.tracker.adapter}/${cfg.tracker.project_key}`;
+  const pre = cfg.orgs.orgs.filter((o) => o.role === "preprod").map((o) => o.alias);
+  return `dev=${devOrg(cfg).alias} preprod=${pre.length ? pre.join("|") : "none"} evidence=${evidenceOrg(cfg)?.alias ?? "none"} tracker=${describeTracker(cfg)}`;
 }

@@ -30,8 +30,12 @@ with a source for every fact.
 ## Output (both files, always)
 - `work/<KEY>/00d-cartography.md` — human-readable map for THIS ticket:
   1. Objects in scope: key fields (API name, type, required, formula/rollup), record types, sharing model
-  2. Automation on each object in **order of execution**: before-save flows, before triggers, validation rules,
-     after triggers, after-save flows, workflow/process builder (legacy), then async (queueable/batch/platform events)
+  2. Automation on each object in **order of execution**: before-save record-triggered flows, before triggers, validation
+     rules (system, then custom), duplicate rules, after triggers, assignment / auto-response / workflow rules (a workflow
+     field update re-runs the update triggers once), escalation rules, flows launched by workflow, after-save record-triggered
+     flows, entitlement rules, roll-up summary parent saves, criteria-based sharing, then post-commit work (email, async Apex,
+     async flow paths). The numbered list is in `.claude/skills/std-trigger-framework/SKILL.md`; verify it against
+     `knowledge/mirror` when that is populated and cite the line
   3. Consumers of each scoped component (who calls it, from `dependency-graph.json` + MetadataComponentDependency)
   4. Data shape: row counts (prod via `prod_row_count`, dev via SOQL), distribution facts that matter for the bug
   5. Drift: for every scoped component, LastModifiedDate in dev vs prod (Tooling) and whether the preprod baseline flagged it

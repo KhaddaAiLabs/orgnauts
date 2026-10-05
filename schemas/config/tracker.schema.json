@@ -15,6 +15,7 @@
     },
     "adapter": {
       "enum": [
+        "mcp",
         "jira",
         "file"
       ]
@@ -54,7 +55,35 @@
     },
     "post_draft": {
       "const": "disabled"
+    },
+    "mcp": {
+      "type": "object",
+      "required": [
+        "server",
+        "read_tools"
+      ],
+      "properties": {
+        "server": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,40}$"
+        },
+        "kind": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "read_tools": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_]{1,80}$"
+          }
+        },
+        "prior_art_jql": {
+          "type": "string"
+        }
+      }
     }
   },
-  "title": "config/tracker.yaml \u2014 read-only; post_draft is hard-coded disabled"
+  "title": "config/tracker.yaml \u2014 read-only; post_draft is hard-coded disabled; adapter mcp (default) | jira | file"
 }

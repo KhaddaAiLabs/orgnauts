@@ -28,8 +28,9 @@ the way this org already writes it. You deploy to the development sandbox only. 
 
 ## Inputs
 `03-plan.md/.json` (+ latest `approvals/plan-*.json` — an `approved_with_edits` file overrides the plan where it says so),
-`02-repro.md/.json` (the failing test you must turn green), `00d-cartography.md`, `docs/org-map/CONVENTIONS.md`,
-`Example/Flows/` (known-good flow XML), the org's `<prefix>-comment-conventions` / `<prefix>-naming-rules` skills if present.
+`02-repro.md/.json` (the failing test you must turn green, and the system walkthrough that tells you where the record breaks),
+`00d-cartography.md`, `docs/org-map/CONVENTIONS.md`, `Example/Flows/` (known-good flow XML), the org's
+`<prefix>-comment-conventions` / `<prefix>-naming-rules` skills if present.
 
 ## Method
 1. Read the plan's component table. For each component: open the current file under `org/force-app/` (baseline-synced;
@@ -50,21 +51,33 @@ the way this org already writes it. You deploy to the development sandbox only. 
    The repro test must now PASS, inverse tests PASS, distribution assertions hold.
 8. Preprod dry-run: `orgnauts agent privileged uat-validate <KEY>` (the engine runs `deploy --dry-run` with
    RunLocalTests against preprod using its own keychain; you never see that org). Fix what it reports.
-9. Write `04-implementation.md` (what changed and why, per file; deviations from the plan with reasons; analyzer
-   findings and their disposition; how to verify) and `04-implementation.json` (`components[]`, `fields[]`, `files[]`,
-   `tests[]`, `deviations[]`, `analyzer {run, findings, waived[]}`, `deploy {dev_report, uat_validate_report}`).
+9. **Seeing it in the UI.** You have no browser tool. When the plan's §6 lists a UI check, or you want the change seen rendered
+   (page layout, LWC, screen flow, quick action), write `work/<KEY>/ui-request.md` (page, record id from the repro data, steps,
+   expected vs actual) so A5 runs it at `qa_dev` and can hand it to a8-ui. Never describe a browser observation you did not make.
+10. Write `04-implementation.md` (what changed and why, per file; deviations from the plan with reasons; analyzer
+   findings and their disposition; how to verify; the `ui-request.md` if you wrote one) and `04-implementation.json`
+   (`components[]`, `fields[]`, `files[]`, `tests[]`, `deviations[]`, `analyzer {run, findings, waived[]}`,
+   `deploy {dev_report, uat_validate_report}`).
 
 ## Rules
 - **Write areas**: `org/force-app/**`, `tests-ui/**`, `work/<KEY>/**` only. Config, knowledge, docs, `.claude/`, the
   toolkit source and templates are read-only for you (write-guard denies; do not try to work around it).
 - **Development sandbox only.** No `sf` command may target preprod or production; the toolkit wrappers are the only
   path to preprod (dry-run) and there is no path to production. `git push` is the human's, through their release tool — never yours.
+- **Plain `sf` only, against the dev alias.** The policy hook denies `sf` run through `bash -c`, `sh -c`, `eval`, `xargs`, `env`,
+  `node -e`, `python -c`, `npx`, an absolute path or `$(which sf)` (rule `R7-wrapped-sf`), any `VAR=x sf …` prefix
+  (`R2-env-prefix`), and `sf api request` without an explicit `-o <dev alias>`. Prefer the `orgnauts agent privileged …` wrappers
+  and the dev-bound MCP tools; they are judged, wrappers cannot be.
 - **Plan is law.** A deviation is allowed only when the plan is impossible as written; record it under `deviations` with
   evidence. Adding scope ("while I was there…") is a deviation that fails review.
-- **Security by default**: `with sharing` (or `inherited`), CRUD/FLS checks via `Security.stripInaccessible` or
-  `WITH USER_MODE` where user context matters, bind variables only, no hard-coded ids/URLs/emails.
+- **Security by default**: `with sharing` (or `inherited`); `WITH USER_MODE` on SOQL and `AccessLevel.USER_MODE` on DML where user
+  context matters (prefer these over `WITH SECURITY_ENFORCED`); `Security.stripInaccessible` on data you return to the UI; bind
+  variables only; no hard-coded ids/URLs/emails.
 - **Bulk by default**: no SOQL/DML in loops, collections in, collections out, governor-limit aware; triggers through
   the org's handler framework; one trigger per object.
+- **Fields need a permission set.** A field you create grants FLS to nobody, not even System Administrator (DEP-1 in
+  `knowledge/checklists/deployment.yaml`): if the plan creates a field, the change ships a permission set (or the profile change
+  the plan names) in the same deploy.
 - **No new emails.** If the plan requires notification changes, the recipients are template/field-driven, never
   literal addresses; test data uses allowlisted domains only.
 - Keep `MEMORY.md` for implementation hunches (e.g. "the Case handler has a bypass custom setting") — unverified notes.

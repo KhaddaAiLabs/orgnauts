@@ -4,7 +4,7 @@ items:
     question: Is sharing declared explicitly for every new/changed class, with a justification for any "without sharing"?
     applies_when: apex
   - id: SEC-2
-    question: Are CRUD/FLS enforced (USER_MODE / SECURITY_ENFORCED / stripInaccessible) on user-context paths?
+    question: Are CRUD/FLS enforced on user-context paths — WITH USER_MODE on queries and AccessLevel.USER_MODE on DML preferred, Security.stripInaccessible on the response path (no new WITH SECURITY_ENFORCED)?
     applies_when: apex
   - id: SEC-3
     question: Is every dynamic SOQL/SOSL bound or escaped?

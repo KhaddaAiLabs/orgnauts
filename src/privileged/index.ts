@@ -13,7 +13,7 @@ import { componentKeyFromPath } from "../core/fingerprint.js";
 import { git } from "../core/git.js";
 import { loadManifest } from "../core/manifest.js";
 import { projectPaths, vaultDir, type ProjectPaths } from "../core/paths.js";
-import { apexRunAnonymous, apexRunTests, deployStart, describe, orgDisplay, retrieveStart, sf, soql, type ApexTestResult } from "../core/sf.js";
+import { apexRunAnonymous, apexRunTests, deployStart, describe, orgDisplay, retrieveStart, sf, sfOffline, soql, type ApexTestResult } from "../core/sf.js";
 import { run, which } from "../core/shell.js";
 import { ensureDir, exists, nowIso, readJsonOr, sha256, tsCompact, uniq, writeJsonAtomic, writeTextAtomic, OrgnautsError } from "../core/util.js";
 import { compareExpected } from "../engines/lifecycle.js";
@@ -384,6 +384,7 @@ export async function runAnalyzer(ticket: string, p: ProjectPaths = projectPaths
   if (!files.length) { result.available = true; result.reason = "no analyzable files changed"; writeJsonAtomic(path.join(vaultDir(p, ticket), "validations", "analyzer.json"), result); return result; }
   const args = ["code-analyzer", "run", "--rule-selector", "Recommended", "--output-file", outFile, "--severity-threshold", "5"];
   for (const f of files) args.push("--workspace", path.join(p.root, f));
+  if (sfOffline()) { result.reason = "offline mode (ORGNAUTS_OFFLINE=1): Code Analyzer not run"; writeJsonAtomic(path.join(vaultDir(p, ticket), "validations", "analyzer.json"), result); return result; }
   const r = await run("sf", args, { cwd: p.root, timeoutMs: 15 * 60_000 });
   if (r.code === -1) { result.reason = "sf CLI not found"; }
   else if (/not a sf command|command code-analyzer|Warning: code-analyzer/i.test(r.stderr + r.stdout) && !exists(outFile)) { result.reason = "code-analyzer plugin not installed: sf plugins install code-analyzer"; }

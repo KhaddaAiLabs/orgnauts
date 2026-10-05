@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
-import { makeProject, cleanup, writeJson, write } from "./helpers.mjs";
+import { makeProject, cleanup, writeJson, write , VISUAL } from "./helpers.mjs";
 import { loadConfig } from "../dist/core/config.js";
 import { projectPaths } from "../dist/core/paths.js";
 import { newManifest, saveManifest, stageRecord } from "../dist/core/manifest.js";
@@ -23,10 +23,10 @@ function project() {
   return { root, p, cfg, m, vault };
 }
 
-test("the 12 gates are registered", () => {
+test("the gates are registered (incl. v0.3.0 ticket-import + visual-check)", () => {
   const names = gateNames().sort();
-  for (const g of ["contract-check", "risk-floor", "baseline-check", "email-guard", "naming-lint", "assertion-referee", "plan-lint", "semantic-check", "checklist", "comment-lint", "deploy-report", "test-quality", "security", "comms-lint", "analyzer"]) assert.ok(names.includes(g), `gate ${g}`);
-  assert.ok(Object.keys(GATES).length >= 12);
+  for (const g of ["contract-check", "risk-floor", "baseline-check", "email-guard", "naming-lint", "assertion-referee", "plan-lint", "semantic-check", "checklist", "comment-lint", "deploy-report", "test-quality", "security", "comms-lint", "analyzer", "ticket-import", "visual-check"]) assert.ok(names.includes(g), `gate ${g}`);
+  assert.ok(Object.keys(GATES).length >= 18);
 });
 
 test("contract-check: missing → failed; invalid JSON → failed; valid + resolving evidence → passed; dangling evidence ref → failed", async () => {
@@ -39,7 +39,7 @@ test("contract-check: missing → failed; invalid JSON → failed; valid + resol
     write(path.join(vault, "01-intake.json"), "{ not json");
     r = await runGate("contract-check", buildContext("DEMO-101", "intake", {}, p), { persist: false });
     assert.equal(r.status, "failed"); assert.match(r.reason, /not valid JSON/);
-    const intake = { classification: "BUG", summary: "Critical web cases lose their owner after the priority flip", acceptance_criteria: [{ id: "AC1", text: "owner is the regional queue", source: "ticket.md#L12" }], scope: [{ type: "ApexClass", api_name: "CaseEscalationOwnerService", evidence: { source: "vault", ref: "ticket.md" } }], objects: ["Case"], touches: ["apex"], suggested_tier: "HIGH", keywords: ["escalation"], questions: [] };
+    const intake = { classification: "BUG", summary: "Critical web cases lose their owner after the priority flip", acceptance_criteria: [{ id: "AC1", text: "owner is the regional queue", source: "ticket.md#L12" }], scope: [{ type: "ApexClass", api_name: "CaseEscalationOwnerService", evidence: { source: "vault", ref: "ticket.md" } }], objects: ["Case"], touches: ["apex"], suggested_tier: "HIGH", keywords: ["escalation"], questions: [], visual: VISUAL };
     writeJson(path.join(vault, "01-intake.json"), intake);
     r = await runGate("contract-check", buildContext("DEMO-101", "intake", {}, p), { persist: false });
     assert.equal(r.status, "failed"); assert.match(r.reason, /evidence refs do not resolve/, "ticket.md does not exist yet");

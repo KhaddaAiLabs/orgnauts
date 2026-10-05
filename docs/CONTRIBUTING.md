@@ -5,7 +5,7 @@ is a productivity tool: a change that makes an agent faster but lets it near pro
 
 ## Before you open a pull request
 
-1. `npm run verify` — build, the 96 offline tests, the hardcode lint, the repo checks and the hook-latency budget must
+1. `npm run verify` — build, the 119 offline tests, the hardcode lint, the repo checks and the hook-latency budget must
    all stay green. Add a test for every behaviour you change (gates, hooks, state machine, UI, MCP, config layers).
    Tests start from `config/defaults/` — never from your personal `config/*.yaml`, which is gitignored.
 2. `node scripts/hardcode-lint.mjs` — nothing company-specific outside `config/`. Examples use `PROJ-123`,

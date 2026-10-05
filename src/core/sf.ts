@@ -34,9 +34,13 @@ export function keychainEnv(keychain: Keychain): NodeJS.ProcessEnv {
   return { HOME: hp.engineHome, USERPROFILE: hp.engineHome, SF_AUTOUPDATE_DISABLE: "true", SF_DISABLE_TELEMETRY: "true" };
 }
 
+/** v0.3.0: ORGNAUTS_OFFLINE=1 (the test suite, demos without an org) — no `sf` process is ever spawned by the toolkit. */
+export function sfOffline(): boolean { return process.env.ORGNAUTS_OFFLINE === "1"; }
+
 export async function sf<T = unknown>(args: string[], opts: { keychain?: Keychain; cwd?: string; timeoutMs?: number } = {}): Promise<SfCallResult<T>> {
   const keychain = opts.keychain ?? "agent";
   const finalArgs = args.includes("--json") ? args : [...args, "--json"];
+  if (sfOffline()) return { ok: false, raw: { code: -1, stdout: "", stderr: "", timedOut: false, durationMs: 0 }, error: "offline mode (ORGNAUTS_OFFLINE=1): the sf CLI is not called", unavailable: true };
   const raw = await run("sf", finalArgs, { cwd: opts.cwd, env: keychainEnv(keychain), timeoutMs: opts.timeoutMs ?? 10 * 60_000 });
   if (raw.code === -1) return { ok: false, raw, error: "sf CLI not found (install @salesforce/cli)", unavailable: true };
   if (raw.timedOut) return { ok: false, raw, error: "sf CLI timed out", unavailable: true };
@@ -235,6 +239,7 @@ export async function describe(sobject: string, org: string, keychain: Keychain)
 }
 
 export async function sfVersion(): Promise<string | undefined> {
+  if (sfOffline()) return undefined;
   const r = await run("sf", ["--version"], { timeoutMs: 20_000 });
   return r.code === 0 ? r.stdout.trim().split(/\r?\n/)[0] : undefined;
 }

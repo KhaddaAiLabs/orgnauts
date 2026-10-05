@@ -201,6 +201,8 @@ test("D-093 c: recovery — a failed stage whose gates all re-pass becomes done,
     // the vault as Run 1 left it: the agent's output IS there and valid, but the stage was marked failed
     const vault = path.join(root, "work", "DEMO-101");
     fs.mkdirSync(vault, { recursive: true });
+    // v0.3.0: prior_art also runs the ticket-import gate — the vault needs a real (non-stub) ticket snapshot
+    fs.writeFileSync(path.join(vault, "ticket.json"), JSON.stringify({ key: "DEMO-101", tracker: "file", fetched_at: "x", title: "Critical web cases lose their owner", description: "d", labels: [], components: [], comments: [], attachments: [], links: [], raw_hash: "x" }));
     fs.writeFileSync(path.join(vault, "00c-prior-art.md"), "# Prior art\n\nNothing related found; every surface returned zero with a control.\n");
     fs.writeFileSync(path.join(vault, "00c-prior-art.json"), JSON.stringify({
       ticket: "DEMO-101",

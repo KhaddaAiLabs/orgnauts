@@ -64,3 +64,11 @@ export function humanCli(root, args) {
   const r = import_child.spawnSync("node", [path.join(REPO, "bin", "orgnauts-human.js"), ...args], { encoding: "utf8", env: { ...process.env, ORGNAUTS_PROJECT_DIR: root } });
   return { code: r.status, stdout: r.stdout, stderr: r.stderr };
 }
+
+/** D-107: a valid `visual` block for intake/plan fixtures (visual-check renders work/<KEY>/visuals/<stage>.html from it). */
+export const VISUAL = {
+  issue: { headline: "Critical web cases keep the submitting user as owner", steps: ["A web form creates a Case with Priority = Critical", "The before-save flow Case_BeforeSave_Routing evaluates the owner rule", "The rule tests Origin = 'Email' and is false for web cases"], where_it_breaks: "Case_BeforeSave_Routing → decision Route_By_Origin → the Critical branch is never reached for Origin = Web" },
+  fix: { headline: "Route by Priority as well as Origin so Critical web cases reach the escalation queue", steps: ["Add a Priority = Critical outcome to Route_By_Origin", "Assign OwnerId = Regional_Escalation queue on that outcome", "Keep the Email branch unchanged"] },
+  example: { record: "Case 00012345, Origin = Web, Priority = Critical, created by a portal user", today: "Owner stays the portal user; nobody in support sees it", expected: "Owner = Regional Escalation queue within the same save" },
+  mermaid: { issue: "flowchart LR\n  A[Web Case created] --> B{Origin = Email?}\n  B -- no --> C[owner unchanged]\n  B -- yes --> D[queue]", fix: "flowchart LR\n  A[Web Case created] --> B{Origin = Email OR Priority = Critical?}\n  B -- yes --> D[Regional Escalation queue]\n  B -- no --> C[owner unchanged]" },
+};

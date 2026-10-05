@@ -13,6 +13,10 @@ import type { ApexTestResult, DeployResult } from "../core/sf.js";
 export interface BaselineReport {
   synced_at: string;
   ancestor_source: "fingerprint" | "tooling-dates" | "none";
+  /** D-108: the preprod org this baseline was compared with / copied from (several may be configured). */
+  source_org?: string;
+  /** D-108: false when every in-scope component was already identical — nothing was copied, dev was already fresh. */
+  refresh_needed?: boolean;
   scope: string[];
   components: { key: string; classification: string; action: string; dev_hash?: string; uat_hash?: string; post_sync_equal?: boolean }[];
   excluded: string[];
