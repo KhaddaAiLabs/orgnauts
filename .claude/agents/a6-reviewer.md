@@ -50,8 +50,9 @@ the developer on purpose; if `config/models.yaml` gives you the same alias as `a
 2. **Acceptance criteria** — each criterion mapped to a test that proves it (from the test report), or ❌.
 3. **Repro proof** — the failing test now passes, the inverse still passes (quote `validations/tests-dev.json`).
 4. **Security (surface first)** — sharing posture (`with/without/inherited sharing` per class, justified), CRUD/FLS
-   enforcement, SOQL injection (bind variables / `escapeSingleQuotes`), hard-coded ids/URLs/credentials, PII in debug
-   logs, permission-set changes minimal and named.
+   enforcement (`WITH USER_MODE` on queries and `AccessLevel.USER_MODE` on DML preferred; `Security.stripInaccessible` on the
+   response path; new `WITH SECURITY_ENFORCED` is a nit), SOQL injection (bind variables / `escapeSingleQuotes`),
+   hard-coded ids/URLs/credentials, PII in debug logs, permission-set changes minimal and named.
 5. **Well-Architected** — *Trusted* (secure, compliant, reliable: bulk-safe, error handling, idempotent), *Easy*
    (intentional: smallest change; automated: tests cover it; engaging: user-facing messages clear), *Adaptable*
    (resilient: kill switch/rollback; composable: reuses the trigger framework/utilities, no duplication).
@@ -71,6 +72,11 @@ Written for the human who will deploy through their release tool: the component 
 touch by hand and why**, pre-deploy checks, deployment window (respect `config/calendar.yaml` freezes/release weekends),
 test level to run, post-deploy verification queries (from the plan's `prod_verification[]`), rollback steps, remediation
 script hand-off (who runs, when, verification), comms readiness, known drift between preprod and production.
+Walk `knowledge/checklists/deployment.yaml` (DEP-1..8) and turn every item that applies into a by-hand step with the org it
+applies to: the permission set that carries FLS for new fields (a field deploy grants FLS to nobody), who gets each permission
+set (it deploys with 0 assignees), UserAccessPolicy Activate + Apply to all, flow activation, environment-specific ids to re-point
+(email templates, queues, org-wide addresses, record types, custom metadata ids), `UserExternalCredential` read for Named
+Credential callers, FlexiPage activation and assignment.
 
 ## Contract — `06-review.json`
 `verdict`, `security {crud_fls, sharing, injection, findings[]}` (the `security` gate requires `crud_fls` and `sharing`

@@ -55,14 +55,13 @@ test("gates decide: stage done but gate failed → bounce/retry; passed + auto t
     assert.equal(r.decision.stage, "prior_art");
     assert.equal(r.decision.attempt, 2);
     // now pass
-    recordGate(r.manifest, "prior_art", { name: "contract-check", status: "passed" });
+    for (const g of STAGE_BY_ID.prior_art.gates) recordGate(r.manifest, "prior_art", { name: g, status: "passed" }); // v0.3.0: ticket-import + contract-check
     markStageDone(r.manifest, "prior_art");
     r = decideHandoff(r.manifest, cfg);
     assert.equal(r.decision.action, "SPAWN");
     assert.equal(r.decision.stage, "intake", "prior_art has no human gate → advance to intake");
     // intake: pass gates; tier UNSET → risk-floor gate sets it; emulate HIGH → intake gate is ask
-    recordGate(r.manifest, "intake", { name: "contract-check", status: "passed" });
-    recordGate(r.manifest, "intake", { name: "risk-floor", status: "passed" });
+    for (const g of STAGE_BY_ID.intake.gates) recordGate(r.manifest, "intake", { name: g, status: "passed" }); // v0.3.0: + visual-check
     applyTier(r.manifest, "HIGH", "risk-floor");
     markStageDone(r.manifest, "intake");
     r = decideHandoff(r.manifest, cfg);

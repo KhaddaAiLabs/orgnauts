@@ -8,7 +8,7 @@ cartography → reproduce → plan → develop → QA → review → comms, with
 ## How this repo is driven
 
 - The human starts a conductor session with `orgnauts-human start` (= `claude --agent conductor`). Inside it: `/ticket <KEY>`,
-  `/status`, `/approve`, `/reject`, `/hold`, `/resume`, `/feedback`, `/help`.
+  `/status`, `/approve`, `/reject`, `/hold`, `/resume`, `/feedback`, `/autonomy` (info only), `/help`.
 - A plain `claude` session in this folder (no `--agent`) is for **maintenance and reading**, not for working tickets:
   `/ticket` is blocked by the prompt hook outside a conductor session.
 - Specialists (`.claude/agents/a0-…a9-*.md`) are spawned only by the conductor, only in the order the toolkit allows
@@ -35,6 +35,16 @@ cartography → reproduce → plan → develop → QA → review → comms, with
 - **P12** Agents never browse. Platform knowledge = `knowledge/mirror/` (Salesforce documentation domains only) + `knowledge/curated/`
   (human-filed, with `source_url` / `author` / `trust`). Every platform claim cites a file and line (D-103).
 
+Also non-negotiable since v0.3.0:
+
+- **The tracker is read-only, through MCP** (D-105). The toolkit holds no tracker credential; a1-intake is the only agent with
+  tracker tools, all READ (`config/tracker.yaml → mcp.read_tools`), and imports the ticket with `orgnauts agent ticket import`.
+  Nobody comments, edits, transitions or creates anything in the tracker: the `tracker-guard` hook (`T1-tracker-readonly`) and
+  the static denies refuse every write tool. Comments are draft files the human pastes.
+- **Where the system stops is per-agent configuration** (D-106): `config/autonomy.yaml → agents.<agent>: ask | auto | inherit`,
+  changed only by the human (`orgnauts-human autonomy set …`). Deploys and remediation always stop (hard floor). Every WAIT_HUMAN
+  prompt says "Stopped because: …" and names the visual page (`work/<KEY>/visuals/<stage>.html`, D-107) when the stage has one.
+
 ## Arbitration: sf-skills plugin vs Orgnauts standards
 
 The `salesforce-development` plugin (pinned in `.claude-plugin/marketplace.json`) provides Salesforce skills, the
@@ -50,10 +60,14 @@ approved lessons (`lessons-<agent>` skills) → `std-*` skills → plugin skills
 
 ## Layout (only what you need to navigate)
 
-`config/` (YAML, schema-validated, edited by the UI/CLI — read-only for agents) · `work/<KEY>/` (ticket vaults, gitignored) ·
-`org/force-app/` (SFDX source, baseline-synced from preprod) · `knowledge/` (checklists, guards, lessons, docs mirror) ·
-`docs/` (SETUP, ARCHITECTURE, RUNBOOK, THREAT-MODEL, org-map) · `templates/` (stage prompts + files) ·
-`schemas/` (manifest, config, contracts) · `src/` + `bin/` (the toolkit; agents never edit; hooks run the installed copy).
+`config/` (YAML, schema-validated, edited by the UI/CLI — read-only for agents; `tracker.yaml` adapter `mcp`, `autonomy.yaml`
+per-agent gates, `orgs.yaml` with several preprod orgs and a `baseline_source`) · `inbox/<KEY>.md|.json` (manual ticket paste,
+the no-tracker fallback) · `work/<KEY>/` (ticket vaults, gitignored; `00-inbox/ticket-import.json` is what the tracker returned,
+`visuals/*.html` the rendered pages) · `org/force-app/` (SFDX source, baseline-synced from the chosen preprod source) ·
+`knowledge/` (checklists incl. deployment/limits/sharing/test-data, guards, lessons, docs mirror) ·
+`docs/` (SETUP, ARCHITECTURE, RUNBOOK, SAFETY, THREAT-MODEL, org-map) · `templates/` (stage prompts + files) ·
+`schemas/` (manifest, config, contracts) · `src/` + `bin/` (the toolkit; agents never edit; hooks run the installed copy) ·
+`.orgnauts/` (runtime state incl. `ui-allow-hosts.json`, the one-ticket preprod browser window for `qa_uat`; toolkit-owned).
 
 ## Build & test (humans / CI)
 

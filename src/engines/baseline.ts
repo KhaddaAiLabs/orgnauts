@@ -10,7 +10,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { loadConfig, devOrg, preprodOrg, type AllConfig } from "../core/config.js";
+import { loadConfig, devOrg, preprodOrg, preprodOrgs, type AllConfig, type OrgConfig } from "../core/config.js";
 import { emitEvent } from "../core/events.js";
 import { componentFingerprint, componentKeyFromPath, groupComponents } from "../core/fingerprint.js";
 import { commitAll, git, isRepo } from "../core/git.js";
@@ -23,6 +23,8 @@ import type { BaselineReport } from "../gates/verdicts.js";
 
 export type Classification = "IDENTICAL" | "UAT-NEWER" | "DEV-NEWER" | "BOTH-CHANGED" | "UNKNOWN" | "MISSING-IN-UAT" | "MISSING-IN-DEV";
 export type Decision = "keep-dev" | "take-uat" | "exclude";
+/** Decisions file: component → Decision, plus the reserved key `source` → preprod alias to copy from (D-108) and `*` → take-uat. */
+export type Decisions = Record<string, Decision | string>;
 
 export interface Scope {
   components: string[];  // "ApexClass:Foo"
@@ -48,22 +50,45 @@ export function loadScope(p: ProjectPaths, ticket: string): Scope {
   return { ...s, components: [...out].sort() };
 }
 
-export function loadDecisions(p: ProjectPaths, ticket: string): Record<string, Decision> {
-  return readJsonOr<Record<string, Decision>>(path.join(vaultDir(p, ticket), "baseline-decisions.json"), {});
+export function loadDecisions(p: ProjectPaths, ticket: string): Decisions {
+  return readJsonOr<Decisions>(path.join(vaultDir(p, ticket), "baseline-decisions.json"), {});
 }
 
-export function saveDecisions(p: ProjectPaths, ticket: string, d: Record<string, Decision>): void {
+export function saveDecisions(p: ProjectPaths, ticket: string, d: Decisions): void {
   writeJsonAtomic(path.join(vaultDir(p, ticket), "baseline-decisions.json"), d);
 }
 
-/** Parse "keep-dev:Flow:X; take-uat:ApexClass:Y; exclude:CustomField:Case.Z" (from /approve --answer). */
-export function parseDecisionAnswer(answer: string): Record<string, Decision> {
-  const out: Record<string, Decision> = {};
+/** Parse "keep-dev:Flow:X; take-uat:ApexClass:Y; exclude:CustomField:Case.Z; source:UAT" (from /approve --answer). */
+export function parseDecisionAnswer(answer: string): Decisions {
+  const out: Decisions = {};
   for (const part of answer.split(/[;,\n]+/)) {
     const m = part.trim().match(/^(keep-dev|take-uat|exclude)\s*[:=]\s*(.+)$/i);
     if (m) out[m[2].trim()] = m[1].toLowerCase() as Decision;
+    const src = part.trim().match(/^source\s*[:=]\s*([A-Za-z][A-Za-z0-9_-]{1,40})$/i);
+    if (src) out["source"] = src[1];
   }
   return out;
+}
+
+export interface BaselineSource { alias: string; label?: string | null; is_default: boolean; chosen: boolean; instance_url?: string | null }
+
+/**
+ * D-108 — which preprod org does THIS ticket copy from? A team often has one shared Partial-Copy UAT and maybe a QA or
+ * staging org; each developer has their own dev sandbox. Order: the ticket's recorded choice (baseline-decisions.json →
+ * source, set by `/approve … --answer "source:X"` or `orgnauts-human baseline decide --source X`) → scope.json →
+ * the org flagged `baseline_source: true` → the only preprod org. Several candidates and no choice → undefined (ask).
+ */
+export function listBaselineSources(cfg: AllConfig, ticket: string, p: ProjectPaths = projectPaths()): { configured: BaselineSource[]; chosen?: OrgConfig } {
+  const all = preprodOrgs(cfg);
+  const dec = loadDecisions(p, ticket);
+  const scope = readJsonOr<Scope & { baseline_source?: string }>(path.join(vaultDir(p, ticket), "scope.json"), { components: [] });
+  const want = (typeof dec["source"] === "string" ? dec["source"] : undefined) ?? scope.baseline_source;
+  let chosen: OrgConfig | undefined;
+  if (want) chosen = all.find((o) => o.alias.toLowerCase() === want.toLowerCase());
+  if (!chosen && all.length === 1) chosen = all[0];
+  if (!chosen && all.length > 1) chosen = all.find((o) => o.baseline_source === true);
+  const def = preprodOrg(cfg);
+  return { configured: all.map((o) => ({ alias: o.alias, label: o.label, is_default: o.alias === def?.alias, chosen: chosen?.alias === o.alias, instance_url: o.instance_url })), chosen };
 }
 
 function packageDir(p: ProjectPaths): string {
@@ -92,10 +117,10 @@ function hashesIn(dir: string): Record<string, { hash: string; files: string[] }
   return out;
 }
 
-async function toolingDates(cfg: AllConfig, key: string): Promise<{ dev?: string; uat?: string } | undefined> {
+async function toolingDates(cfg: AllConfig, key: string, uatOrg?: OrgConfig): Promise<{ dev?: string; uat?: string } | undefined> {
   const [type, name] = key.split(":");
   const dev = devOrg(cfg);
-  const uat = preprodOrg(cfg);
+  const uat = uatOrg ?? preprodOrg(cfg);
   if (!uat) return undefined;
   let q: string | undefined;
   if (type === "ApexClass" || type === "ApexTrigger") q = `SELECT LastModifiedDate FROM ${type} WHERE Name = '${name.replace(/'/g, "")}'`;
@@ -119,10 +144,11 @@ export async function runBaseline(opts: BaselineRunOptions): Promise<BaselineRep
   const m = loadManifest(opts.ticket, p);
   const vault = vaultDir(p, opts.ticket);
   const dev = devOrg(cfg);
-  const uat = preprodOrg(cfg);
+  const sources = listBaselineSources(cfg, opts.ticket, p);
+  const uat = sources.chosen;
   const scope = loadScope(p, opts.ticket);
   const decisions = loadDecisions(p, opts.ticket);
-  const report: BaselineReport = { synced_at: nowIso(), ancestor_source: "none", scope: scope.components, components: [], excluded: [], stopped: false };
+  const report: BaselineReport = { synced_at: nowIso(), ancestor_source: "none", source_org: uat?.alias, scope: scope.components, components: [], excluded: [], stopped: false };
   const finish = (rep: BaselineReport) => {
     writeJsonAtomic(path.join(vault, "00b-baseline.json"), rep);
     writeTextAtomic(path.join(vault, "00b-baseline.md"), renderReport(rep, m, cfg));
@@ -131,10 +157,19 @@ export async function runBaseline(opts: BaselineRunOptions): Promise<BaselineRep
     return rep;
   };
 
-  if (!uat) {
+  if (!uat && !sources.configured.length) {
     m.flags["no_preprod"] = true;
     log("no preprod org configured — baseline sync skipped (flag no_preprod)");
     return finish({ ...report, stop_reason: undefined });
+  }
+  if (!uat) {
+    // D-108: several preprod orgs, none chosen for this ticket — ask the human which one dev should be refreshed from
+    const list = sources.configured.map((o) => `${o.alias}${o.label ? ` (${o.label})` : ""}${o.is_default ? " [default]" : ""}`).join(", ");
+    const why = `${sources.configured.length} preprod orgs are configured (${list}) — which one should the development sandbox be refreshed from for this ticket? Answer: /approve ${opts.ticket} --stage baseline --answer "source:<alias>"  (or orgnauts-human baseline decide ${opts.ticket} --source <alias>)`;
+    m.status = "waiting_human";
+    m.waiting = { kind: "baseline", stage: "baseline", prompt: why, since: nowIso() };
+    emitEvent({ ticket: opts.ticket, type: "baseline.stopped", stage: "baseline", data: { needs: "source", candidates: sources.configured.map((o) => o.alias) } }, p);
+    return finish({ ...report, stopped: true, stop_reason: why });
   }
   if (!scope.components.length) {
     return finish({ ...report, stopped: true, stop_reason: "scope.json has no components — intake must name the components in scope" });
@@ -177,14 +212,14 @@ export async function runBaseline(opts: BaselineRunOptions): Promise<BaselineRep
       else if (u === anc) cls = "DEV-NEWER";
       else cls = "BOTH-CHANGED";
     } else {
-      const dates = await toolingDates(cfg, key);
+      const dates = await toolingDates(cfg, key, uat);
       if (dates?.dev && dates?.uat) {
         ancestorSource = ancestorSource === "fingerprint" ? "fingerprint" : "tooling-dates";
         cls = new Date(dates.uat) > new Date(dates.dev) ? "UAT-NEWER" : "DEV-NEWER"; // heuristic — both changed cannot be told apart from dates alone
         if (Math.abs(new Date(dates.uat).getTime() - new Date(dates.dev).getTime()) < 60_000) cls = "UNKNOWN";
       } else cls = "UNKNOWN";
     }
-    const dec = decisions[key];
+    const dec = decisions[key] as Decision | undefined;
     let action = "none";
     if (dec === "exclude") { report.excluded.push(key); action = "excluded by human"; }
     else if (cls === "IDENTICAL") action = "none";
@@ -205,6 +240,8 @@ export async function runBaseline(opts: BaselineRunOptions): Promise<BaselineRep
   }
 
   const toTake = report.components.filter((c) => c.action === "take-uat");
+  report.refresh_needed = toTake.length > 0;
+  log(toTake.length ? `refresh needed: ${toTake.length} component(s) differ from ${uat.alias} (${toTake.map((c) => c.key).join(", ")})` : `refresh not needed: every in-scope component already matches ${uat.alias}`);
   if (opts.mode === "check") {
     const drift = report.components.filter((c) => c.classification !== "IDENTICAL" && !report.excluded.includes(c.key));
     if (drift.length) { m.flags["baseline_resync_required"] = true; }
@@ -284,12 +321,12 @@ function copyTo(src: string, dst: string): void {
 }
 
 export function renderReport(rep: BaselineReport, m: Manifest, cfg: AllConfig): string {
-  const uat = preprodOrg(cfg)?.alias ?? "(none)";
+  const uat = rep.source_org ?? preprodOrg(cfg)?.alias ?? "(none)";
   const dev = devOrg(cfg).alias;
   const lines = [
     `# 00b — Baseline Sync · ${m.ticket}`,
     ``,
-    `**Synced at:** ${rep.synced_at} · **Baseline org:** ${uat} · **Dev org:** ${dev} · **Ancestor source:** ${rep.ancestor_source}`,
+    `**Synced at:** ${rep.synced_at} · **Baseline org (source):** ${uat} · **Dev org:** ${dev} · **Ancestor source:** ${rep.ancestor_source} · **Refresh needed:** ${rep.refresh_needed === undefined ? "—" : rep.refresh_needed ? "YES (components copied from the source)" : "NO (dev already matched the source for this scope)"}`,
     rep.stopped ? `\n> 🛑 **STOPPED:** ${rep.stop_reason}\n` : `\n> ✅ Scope is aligned to preprod. ${rep.dev_snapshot_dir ? `Dev snapshot: \`${rep.dev_snapshot_dir}\`` : ""} ${rep.git_commit ? `· git ${rep.git_commit}` : ""}\n`,
     `| Component | Classification | Action | Post-sync equal |`,
     `|---|---|---|---|`,

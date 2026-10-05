@@ -125,7 +125,7 @@ export async function promptRouter(input: FullHookInput): Promise<void> {
       const m0 = loadManifest(key, p);
       // baseline decisions typed in the answer: keep-dev:… take-uat:… exclude:… / scope-ok / take-uat:*
       if ((stage ?? m0.waiting?.stage) === "baseline" && answer) {
-        const d = parseDecisionAnswer(answer);
+        const d = parseDecisionAnswer(answer); // incl. D-108 `source:<alias>` — which preprod org to refresh dev from
         if (/scope-ok|take-uat:\*/i.test(answer)) d["*"] = "take-uat";
         saveDecisions(p, m0.ticket, { ...loadDecisions(p, m0.ticket), ...d });
         stageRecord(m0, "baseline").status = "pending";

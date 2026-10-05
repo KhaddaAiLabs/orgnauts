@@ -1,0 +1,23 @@
+# .gitleaks.toml — gitleaks runs in CI (ci.yml → job "secrets") on every push and pull request.
+#
+# This file extends the default ruleset; it does not weaken it. It only tells gitleaks that the names of the
+# Atlassian MCP READ tools Orgnauts configures (config/defaults/tracker.yaml → mcp.read_tools, mirrored in
+# src/core/config.ts and src/hooks/fast.ts) are tool names, not API tokens: `searchJiraIssuesUsingJql` is 24
+# alphanumeric characters right after the word "Jira", which is exactly the shape the `atlassian-api-token`
+# rule looks for (false positive in gitleaks 8.24.3, the version gitleaks-action@v2 pins by default).
+#
+# Real secrets never belong in this repository: tokens live in environment variables (ORGNAUTS_JIRA_TOKEN,
+# ORGNAUTS_SLACK_WEBHOOK, …) and scripts/hardcode-lint.mjs refuses config files that look like they hold one.
+title = "Orgnauts gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Atlassian MCP tool names that the atlassian-api-token rule mistakes for a 24-character token"
+regexTarget = "match"
+regexes = [
+  '''searchJiraIssuesUsingJql''',
+  '''getJiraIssueRemoteIssueLinks''',
+  '''getVisibleJiraProjects''',
+]

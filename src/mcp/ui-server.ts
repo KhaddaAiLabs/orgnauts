@@ -21,6 +21,7 @@ import { projectPaths, sanitizeTicket, vaultDir } from "../core/paths.js";
 import { orgDisplay, sf } from "../core/sf.js";
 import { appendLine, ensureDir, nowIso, tsCompact } from "../core/util.js";
 import { checkUrl, globToRe, relatedHosts } from "./ui-fence.js";
+import { activeUiAllowHosts } from "../engines/uihosts.js";
 export { relatedHosts, checkUrl };
 
 const p = projectPaths();
@@ -40,7 +41,7 @@ function text(obj: unknown, isError = false) {
 
 
 async function resolveHosts(cfg: AllConfig): Promise<NonNullable<typeof hosts>> {
-  if (hosts && Date.now() - Date.parse(hosts.resolved_at) < 10 * 60_000) return hosts;
+  if (hosts && Date.now() - Date.parse(hosts.resolved_at) < 2 * 60_000) return hosts;
   const allow = new Set<string>(["test.salesforce.com"]);
   const deny = new Set<string>(["login.salesforce.com"]);
   const hostOf = (u?: string | null) => { try { return u ? new URL(u).host.toLowerCase() : undefined; } catch { return undefined; } };
@@ -55,6 +56,9 @@ async function resolveHosts(cfg: AllConfig): Promise<NonNullable<typeof hosts>> 
     }
   }
   for (const h of (process.env.ORGNAUTS_UI_ALLOW_HOSTS ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean)) allow.add(h);
+  // D-109: the toolkit opens a preprod window for ONE ticket while it is at qa_uat (hosts resolved with the engine keychain)
+  const win = activeUiAllowHosts(p);
+  if (win) for (const h of win.hosts) allow.add(h.toLowerCase());
   for (const h of deny) allow.delete(h); // deny always wins
   hosts = { allow, deny, denyPaths: cfg.safety.ui.deny_url_patterns.map(globToRe), resolved_at: nowIso() };
   return hosts;
@@ -107,13 +111,13 @@ const ticketArg = z.string().regex(/^[A-Z][A-Z0-9_]{0,15}-\d{1,8}$/).optional().
 const selectorArg = z.string().min(1).max(500).describe("Playwright selector or locator text (CSS, text=…, role=…, label=…)");
 
 export async function main(): Promise<void> {
-  const server = new McpServer({ name: "orgnauts-ui", version: "0.2.0" }, {
+  const server = new McpServer({ name: "orgnauts-ui", version: "0.3.0" }, {
     instructions: "Browser verbs fenced to the DEVELOPMENT org. Production and Setup URLs are refused at the network layer. Log in with ui_login (frontdoor via the agent keychain), then ui_goto/ui_click/ui_fill/ui_text/ui_screenshot. Always pass the ticket so evidence lands in the vault. Close with ui_close.",
   });
 
   server.registerTool("ui_login", {
     title: "Log the browser into the development org",
-    description: "Opens the org's frontdoor URL (from `sf org open --url-only` in the agent keychain) so the browser session is authenticated. Only orgs with role=development are accepted; evidence/production is refused even though a read-only user exists.",
+    description: "Opens the org's frontdoor URL (from `sf org open --url-only`) so the browser session is authenticated. Development orgs always; the preprod org only while the active ticket is at stage qa_uat and the toolkit has verified the deploy (D-109 — engine keychain, you never see the credential); evidence/production is refused even though a read-only user exists.",
     inputSchema: { org_alias: z.string().regex(/^[A-Za-z][\w-]{0,40}$/).optional().describe("Defaults to the configured development org"), ticket: ticketArg },
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   }, async ({ org_alias, ticket }) => {
@@ -121,10 +125,13 @@ export async function main(): Promise<void> {
       const cfg = loadConfig(p, { fresh: true });
       const org = org_alias ? cfg.orgs.orgs.find((o) => o.alias.toLowerCase() === org_alias.toLowerCase()) : cfg.orgs.orgs.find((o) => o.role === "development");
       if (!org) return text(`unknown org ${org_alias}`, true);
-      if (org.role !== "development") return text(`REFUSED: ui_login is only allowed for development orgs (${org.alias} is ${org.role})`, true);
+      // D-109: a preprod org is accepted only while the toolkit's qa_uat window names it for the active ticket; the frontdoor
+      // then comes from the ENGINE keychain (the agent still holds no preprod credential)
+      const win = org.role === "preprod" ? activeUiAllowHosts(p) : undefined;
+      if (org.role !== "development" && !(win && win.org.toLowerCase() === org.alias.toLowerCase() && (!ticket || win.ticket === ticket))) return text(`REFUSED: ui_login is only allowed for development orgs${org.role === "preprod" ? ` — preprod opens only for the ticket at stage qa_uat after the toolkit verified the deploy (uat_verify)` : ""} (${org.alias} is ${org.role})`, true);
       const s = await ensureSession(ticket);
       if (typeof s === "string") return text(s, true);
-      const r = await sf<{ url?: string }>(["org", "open", "-o", org.alias, "--url-only", "--json"], { keychain: "agent" });
+      const r = await sf<{ url?: string }>(["org", "open", "-o", org.alias, "--url-only", "--json"], { keychain: win ? "engine" : "agent" });
       const url = r.data?.url;
       if (!r.ok || !url) return text(`sf org open --url-only failed: ${r.error ?? "no url"}`, true);
       const h = await resolveHosts(cfg);

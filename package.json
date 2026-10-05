@@ -1,6 +1,6 @@
 {
   "name": "orgnauts",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "An AI crew that integrates with Salesforce. Go / No-Go for every change.",
   "license": "MIT",
   "repository": {
@@ -47,6 +47,7 @@
     "check:repo": "node scripts/repo-checks.mjs",
     "hooks:latency": "node scripts/hooks-latency.mjs",
     "install:toolkit": "node scripts/install-toolkit.mjs",
+    "setup": "(test -f package-lock.json || (echo 'npm run setup: no package-lock.json in this folder \u2014 run it from the Orgnauts repository root (the folder holding package.json AND package-lock.json; `git clone` gives you both)' >&2 && exit 1)) && npm ci && npm run build && npm run install:toolkit && node bin/orgnauts-human.js setup --quick",
     "verify": "npm run build && node scripts/run-tests.mjs && node scripts/hardcode-lint.mjs && node scripts/repo-checks.mjs && node scripts/hooks-latency.mjs"
   },
   "dependencies": {

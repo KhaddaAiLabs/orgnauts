@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { makeProject, cleanup, write, writeJson, readJson, humanCli, agentCli, REPO } from "./helpers.mjs";
+import { makeProject, cleanup, write, writeJson, readJson, humanCli, agentCli, REPO , VISUAL } from "./helpers.mjs";
 
 const { projectPaths } = await import(path.join(REPO, "dist/core/paths.js"));
 const { loadManifest, saveManifest, stageRecord, recordGate } = await import(path.join(REPO, "dist/core/manifest.js"));
@@ -87,7 +87,7 @@ function ticketAtRepro(root, classification) {
   }
   m.stage = "cartography"; m.status = "running"; m.tier = "MEDIUM";
   saveManifest(m, p);
-  if (classification) writeJson(path.join(root, "work", T, "01-intake.json"), { classification, summary: "an intake summary long enough", acceptance_criteria: [{ id: "AC1", text: "x", source: "ticket.md#L1" }], scope: [], objects: ["Case"], touches: ["apex"], suggested_tier: "MEDIUM", keywords: [], questions: [] });
+  if (classification) writeJson(path.join(root, "work", T, "01-intake.json"), { classification, summary: "an intake summary long enough", acceptance_criteria: [{ id: "AC1", text: "x", source: "ticket.md#L1" }], scope: [], objects: ["Case"], touches: ["apex"], suggested_tier: "MEDIUM", keywords: [], questions: [], visual: VISUAL });
   r = agentCli(root, ["handoff", T]); assert.equal(r.code, 0, r.stderr);
   return r.stdout;
 }

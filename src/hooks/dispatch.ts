@@ -3,7 +3,7 @@
  * Any unexpected error → exit 0 with a systemMessage (never crash a session), EXCEPT the deny hooks,
  * which fail CLOSED (deny) when the input is unreadable — a hook that cannot judge must not allow.
  */
-import { readStdinJson, projectRoot, loadPolicy, decideAgentGate, decidePolicy, decideWriteGuard, decideDataGuard, emit } from "./fast.js";
+import { readStdinJson, projectRoot, loadPolicy, decideAgentGate, decidePolicy, decideWriteGuard, decideDataGuard, decideTrackerGuard, emit } from "./fast.js";
 
 const name = process.argv[2] ?? "";
 const t0 = Date.now();
@@ -28,6 +28,10 @@ async function main(): Promise<void> {
       if (process.env.ORGNAUTS_HOOKS_OFF === "1") return emit({ allow: true });
       return emit(decideDataGuard(input, root, loadPolicy(root)));
     }
+    case "tracker-guard": {
+      if (process.env.ORGNAUTS_HOOKS_OFF === "1") return emit({ allow: true });
+      return emit(decideTrackerGuard(input, root, loadPolicy(root)));
+    }
     case "prompt-router": return (await import("./heavy.js")).promptRouter(input as never);
     case "stage-gate": return (await import("./heavy.js")).stageGate(input as never);
     case "stop-guard": return (await import("./heavy.js")).stopGuard(input as never);
@@ -47,7 +51,7 @@ async function main(): Promise<void> {
 
 main().catch((e) => {
   const msg = (e as Error).message ?? String(e);
-  if (["agent-gate", "policy", "write-guard", "data-guard"].includes(name)) {
+  if (["agent-gate", "policy", "write-guard", "data-guard", "tracker-guard"].includes(name)) {
     // fail closed
     process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: `Orgnauts hook error (fail-closed): ${msg}` } }) + "\n");
     process.exit(0);

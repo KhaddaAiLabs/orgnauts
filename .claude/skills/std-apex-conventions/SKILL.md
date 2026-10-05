@@ -12,8 +12,10 @@ When they conflict, follow the higher one and say so in your output.
 ## Security
 - Declare sharing explicitly: `with sharing` by default, `inherited sharing` for utilities, `without sharing` only with a
   comment that names the business reason and the reviewer-visible justification.
-- CRUD/FLS: `WITH USER_MODE` / `WITH SECURITY_ENFORCED` on queries in user context, `Security.stripInaccessible` before DML
-  on user-provided data; system-mode paths documented.
+- CRUD/FLS: prefer `WITH USER_MODE` on SOQL/SOSL and `AccessLevel.USER_MODE` on DML
+  (`Database.insert(records, AccessLevel.USER_MODE)`) in user context; `Security.stripInaccessible` on the response path (data
+  returned to the UI) and before DML on user-provided data where USER_MODE does not fit; system-mode paths documented.
+  Do not add `WITH SECURITY_ENFORCED` to new code; USER_MODE covers CRUD and FLS and is the current recommendation.
 - SOQL/SOSL: bind variables only; `String.escapeSingleQuotes` when dynamic strings are unavoidable.
 - No hard-coded ids, URLs, credentials, email addresses, profile names. Use Custom Metadata / Custom Settings / Labels.
 - Never `System.debug` PII; log ids and counts.

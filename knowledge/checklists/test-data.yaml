@@ -1,0 +1,16 @@
+# knowledge/checklists/test-data.yaml — fixture traps that make a test pass or fail for the wrong reason.
+# The plan answers them for the tests it designs; a2-repro and a5-qa read them before creating any record.
+name: test-data
+items:
+  - id: TST-1
+    question: Before a value (email, name, external id) is used as a unique key in a test, were the rows already carrying it in the sandbox counted? A shared test address can match the wrong record and bypass the code under test.
+    applies_when: always
+  - id: TST-2
+    question: Do fixture emails use an allowlisted address, preferably a .invalid domain (unique and undeliverable), and never a real colleague or customer address?
+    applies_when: always
+  - id: TST-3
+    question: Were the object's before-save flows and triggers read for assignments to the fields the fixture sets (Owner, Status, RecordType, Type, Priority, AccountId)? A before-save assignment silently replaces the value you passed.
+    applies_when: always
+  - id: TST-4
+    question: For records created through the REST API, is the Sforce-Auto-Assign header set to FALSE (Case and Lead assignment rules run by default), and is every record read back after insert to confirm the fields you set?
+    applies_when: data

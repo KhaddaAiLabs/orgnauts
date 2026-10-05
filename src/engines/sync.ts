@@ -9,7 +9,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { loadConfig, devOrg, preprodOrg, evidenceOrg, EFFORT_LEVELS, type AllConfig } from "../core/config.js";
+import { loadConfig, devOrg, preprodOrg, evidenceOrg, trackerMcp, DEFAULT_TRACKER_MCP, EFFORT_LEVELS, type AllConfig } from "../core/config.js";
 import { homePaths, projectPaths, type ProjectPaths } from "../core/paths.js";
 import { AGENT_NAMES } from "../core/state-machine.js";
 import { exists, nowIso, readText, writeJsonAtomic, writeTextAtomic } from "../core/util.js";
@@ -26,6 +26,7 @@ export function syncAll(p: ProjectPaths = projectPaths(), opts: { skipSkills?: b
   const warnings: string[] = [];
   const agents_updated = syncAgentModels(p, cfg, warnings);
   agents_updated.push(...syncAgentSkills(p, warnings));
+  agents_updated.push(...syncTrackerTools(p, cfg, warnings));
   const mcp_written = writeMcpJson(p, cfg, warnings);
   const policy_written = writeCompiledPolicy(p, cfg);
   syncSettingsDenies(p, cfg, warnings);
@@ -144,6 +145,40 @@ export function syncAgentModels(p: ProjectPaths, cfg: AllConfig, warnings: strin
   return updated;
 }
 
+/**
+ * D-105: config/tracker.yaml → the tracker READ tools in a1-intake's `tools:` line. The agent file ships with the
+ * Atlassian Jira names; a team on another tracker sets `mcp.server` + `mcp.read_tools` and sync rewrites the line.
+ * With the jira/file adapters the tracker tools are removed (the toolkit fetches, the agent needs no MCP).
+ */
+export const TRACKER_TOOL_AGENT = "a1-intake";
+export function trackerToolNames(cfg: AllConfig): string[] {
+  if (cfg.tracker.adapter !== "mcp") return [];
+  const m = trackerMcp(cfg);
+  return m.read_tools.map((t) => `mcp__${m.server}__${t}`);
+}
+export function rewriteTrackerTools(fm: string, wanted: string[]): string {
+  const re = /^tools:[ \t]*(.*)$/m;
+  const m = re.exec(fm);
+  if (!m) return fm;
+  const known = new Set([...DEFAULT_TRACKER_MCP.read_tools].map((t) => t.toLowerCase()));
+  const isTrackerTool = (t: string) => { const x = /^mcp__([^_]+(?:_[^_]+)*?)__(.+)$/.exec(t); return !!x && x[1] !== "sf-dev" && !x[1].startsWith("orgnauts") && !x[1].startsWith("plugin_") && (known.has(x[2].toLowerCase()) || wanted.some((w) => w.toLowerCase() === t.toLowerCase())); };
+  const kept = m[1].split(",").map((t) => t.trim()).filter(Boolean).filter((t) => !isTrackerTool(t));
+  const next = [...kept, ...wanted.filter((w) => !kept.some((k) => k.toLowerCase() === w.toLowerCase()))];
+  return fm.replace(re, `tools: ${next.join(", ")}`);
+}
+export function syncTrackerTools(p: ProjectPaths, cfg: AllConfig, warnings: string[]): string[] {
+  const f = path.join(p.agents, `${TRACKER_TOOL_AGENT}.md`);
+  if (!exists(f)) return [];
+  const txt = readText(f);
+  const m = txt.match(/^---\n([\s\S]*?)\n---/);
+  if (!m) { warnings.push(`${TRACKER_TOOL_AGENT}.md has no frontmatter`); return []; }
+  const wanted = trackerToolNames(cfg);
+  const fm = rewriteTrackerTools(m[1], wanted);
+  if (fm === m[1]) return [];
+  writeTextAtomic(f, txt.replace(m[0], `---\n${fm.replace(/\n$/, "")}\n---`));
+  return [`${TRACKER_TOOL_AGENT} tracker tools → ${wanted.length ? wanted.join(", ") : "none (adapter " + cfg.tracker.adapter + ")"}`];
+}
+
 export function writeMcpJson(p: ProjectPaths, cfg: AllConfig, warnings: string[]): boolean {
   const dev = devOrg(cfg);
   const hp = homePaths();
@@ -191,6 +226,9 @@ export function writeCompiledPolicy(p: ProjectPaths, cfg: AllConfig): boolean {
     engine_home: homePaths().engineHome,
     canary_max_age_minutes: cfg.safety.canary_max_age_minutes,
     require_canary: cfg.safety.require_canary_before_data_stages,
+    // D-105: the tracker-guard hook keeps the tracker MCP read-only — only these tools, only on this server
+    tracker_mcp_server: cfg.tracker.adapter === "mcp" ? trackerMcp(cfg).server : DEFAULT_POLICY.tracker_mcp_server,
+    tracker_read_tools: cfg.tracker.adapter === "mcp" ? trackerMcp(cfg).read_tools : DEFAULT_POLICY.tracker_read_tools,
   };
   writeJsonAtomic(path.join(p.state, "policy.compiled.json"), compiled);
   return true;
@@ -254,6 +292,7 @@ export function keychainDenyRules(entries: { alias?: string; aliases?: string[];
 }
 
 export function readAgentKeychainSync(): { alias?: string; aliases?: string[]; username?: string }[] | undefined {
+  if (process.env.ORGNAUTS_OFFLINE === "1") return undefined; // v0.3.0: tests and demos never spawn `sf`
   try {
     const out = execFileSync("sf", ["org", "list", "--all", "--json"], { encoding: "utf8", timeout: 60_000, stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, SF_DISABLE_TELEMETRY: "true", SF_AUTOUPDATE_DISABLE: "true" } });
     const j = JSON.parse(out) as { result?: Record<string, { alias?: string; aliases?: string[]; username?: string }[] | undefined> };

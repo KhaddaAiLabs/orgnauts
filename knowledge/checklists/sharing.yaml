@@ -1,0 +1,12 @@
+# knowledge/checklists/sharing.yaml — who can reach the record, proven, not assumed.
+name: sharing
+items:
+  - id: SHR-1
+    question: Is the object's org-wide default stated, and is it shown HOW the running user reaches each record the change reads or writes (owner, role hierarchy, sharing rule, sharing set, team, manual share, system mode)?
+    applies_when: sharing
+  - id: SHR-2
+    question: For portal, community or guest users, is record access proven with UserRecordAccess (per user and record, with a must-be-false control record), not with the *Share tables? A high-volume portal user's sharing-set grant is never written to CaseShare / AccountShare / ContactShare.
+    applies_when: sharing
+  - id: SHR-3
+    question: For every flow that runs in system mode (without sharing), is it stated who can start it (Run Flows permission, flow access override) and whether any portal or guest profile reaches it?
+    applies_when: flow

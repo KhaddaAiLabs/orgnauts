@@ -9,18 +9,20 @@ import { loadConfig, tryLoadConfig, loadConfigFile, writeConfigFile, type OrgsCo
 import { emitEvent } from "../core/events.js";
 import { loadManifest, listTickets, stageRecord, saveManifest } from "../core/manifest.js";
 import { homePaths, packageRoot, projectPaths, sanitizeTicket, vaultDir } from "../core/paths.js";
+import { AGENT_NAMES, STAGES } from "../core/state-machine.js";
 import { keychainEnv, orgList } from "../core/sf.js";
 import { exists, nowIso, readJsonOr } from "../core/util.js";
 import { recordApproval } from "../engines/approvals.js";
 import { holdTicket, resumeTicket, markDeployed, prodVerify, ticketSummary } from "../engines/lifecycle.js";
 import { loadDecisions, saveDecisions, type Decision } from "../engines/baseline.js";
 import { syncAll, syncAgentSkills, ensureRuntimeDirs } from "../engines/sync.js";
-import { doctor, formatChecks } from "../doctor/index.js";
+import { doctor, preflight, formatChecks } from "../doctor/index.js";
 import { learnDaily, learnSync, allLessons, decideLesson, memoryAudit, lessonFromHumanFeedback, computeRewards, type LessonType } from "../engines/learn.js";
 import { readAllEvents } from "../core/events.js";
 import { readAgentRuns } from "../engines/tokens.js";
 import { runPipeline } from "../engines/pipeline.js";
-import { askAll, applyAnswers } from "../engines/setup.js";
+import { askAll, applyAnswers, nextSteps } from "../engines/setup.js";
+import type { TrackerAdapterName } from "../core/config.js";
 import { orgmapBuild } from "../engines/orgmap.js";
 import { mirrorRefresh } from "../engines/mirror.js";
 import { conventionsBuild } from "../engines/conventions.js";
@@ -93,14 +95,41 @@ async function main(): Promise<void> {
       if (!r.ok) process.exit(1);
       return;
     }
+    case "autonomy": {
+      // D-106: your per-agent switch — stop for /approve after this agent (ask), never stop (auto), or follow the tier matrix (inherit)
+      const sub = a.positional[1] ?? "show";
+      const cfg = loadConfig(p);
+      const agentsCfg = { ...(cfg.autonomy.agents ?? {}) };
+      if (sub === "set") {
+        const agent = a.positional[2]; const mode = a.positional[3];
+        if (!agent || !mode) fail("autonomy set <agent> ask|auto|inherit   (e.g. autonomy set a1-intake ask)");
+        if (!AGENT_NAMES.includes(agent as never)) fail(`unknown agent "${agent}" — one of: ${AGENT_NAMES.join(", ")}`);
+        if (!["ask", "auto", "inherit"].includes(mode)) fail(`mode must be ask | auto | inherit (got "${mode}")`);
+        agentsCfg[agent] = mode as "ask" | "auto" | "inherit";
+        writeConfigFile("autonomy", { ...cfg.autonomy, agents: agentsCfg }, p);
+        say(`${agent} → ${mode}  (config/autonomy.yaml). Applies to the next stage decision; no restart needed.${mode === "auto" ? " Deploys and remediation stay yours (hard floor)." : ""}`);
+        return;
+      }
+      if (sub !== "show") fail("autonomy show | autonomy set <agent> ask|auto|inherit");
+      say(`per-agent gate (config/autonomy.yaml → agents):  ask = stop for /approve after this agent · auto = never stop · inherit = tier matrix`);
+      for (const ag of AGENT_NAMES) {
+        const st = STAGES.filter((s) => s.agent === ag);
+        const mode = agentsCfg[ag] ?? "inherit";
+        const viaTier = st.map((s) => s.human_gate ? `${s.id}: ${["LOW", "MEDIUM", "HIGH"].map((tier) => `${tier}=${cfg.autonomy.tiers[tier as "LOW"]?.human_gates?.[s.human_gate!] ?? "ask"}`).join("/")}` : `${s.id}: auto`).join("; ");
+        say(`  ${ag.padEnd(16)} ${mode.padEnd(8)} ${mode === "inherit" ? `(tier matrix → ${viaTier || "no stage"})` : ""}`);
+      }
+      say(`hard floor (always you): deploy_uat, deploy_prod, remediation.  Change: orgnauts-human autonomy set <agent> ask|auto|inherit`);
+      return;
+    }
     case "baseline": {
-      if (a.positional[1] !== "decide") fail("baseline decide <KEY> --keep-dev Type:Name --take-uat Type:Name --exclude Type:Name [--all-take-uat]");
+      if (a.positional[1] !== "decide") fail("baseline decide <KEY> [--source <alias>] --keep-dev Type:Name --take-uat Type:Name --exclude Type:Name [--all-take-uat]");
       const t = ticketArg(2);
       const d = loadDecisions(p, t);
       for (const k of a.list("keep-dev")) d[k] = "keep-dev" as Decision;
       for (const k of a.list("take-uat")) d[k] = "take-uat" as Decision;
       for (const k of a.list("exclude")) d[k] = "exclude" as Decision;
       if (a.bool("all-take-uat")) d["*"] = "take-uat";
+      if (a.str("source")) d["source"] = a.str("source") as Decision; // D-108: which preprod org to copy from
       saveDecisions(p, t, d);
       const m = loadManifest(t, p);
       stageRecord(m, "baseline").status = "pending";
@@ -196,6 +225,13 @@ async function main(): Promise<void> {
     case "run": { const t = ticketArg(); const r = await runPipeline(t, { allowOauth: a.bool("allow-oauth"), maxLoops: a.num("max-loops"), p, log: (s) => say(`· ${s}`) }); say(`pipeline ${t}: ${r.final_status} after ${r.loops} loop(s), ${r.usd.toFixed(2)} USD — ${r.stopped_reason}`); return; }
     case "ui": { await startUi({ p, port: a.num("port"), open: !a.bool("no-open") }); return; }
     case "doctor": {
+      if (a.bool("preflight")) {
+        // v0.3.0: only the prerequisites (node, sf, git, claude, optional python3/Playwright) — what setup checks before its first question
+        const pf = await preflight({ p });
+        const skipped = pf.checks.filter((c) => c.level === "skip" && c.id === "0b").length > 0;
+        if (a.bool("json")) json(pf); else { say(formatChecks(pf.checks)); say(!pf.ok ? "\n❌ a prerequisite is missing — install it, open a new terminal, run again" : skipped ? "\n✅ no missing prerequisite found (the Salesforce CLI was not checked: ORGNAUTS_OFFLINE=1)" : "\n✅ prerequisites present"); }
+        process.exit(pf.ok ? 0 : 1);
+      }
       const r = await doctor({ p1: a.bool("p1") || a.bool("all"), emailCanary: a.bool("email-canary") || a.bool("all"), hooksLatency: a.bool("hooks-latency") || a.bool("all"), fls: a.bool("fls") || a.bool("all"), p });
       if (a.bool("json")) json(r); else { say(formatChecks(r.checks)); say(r.ok ? "\n✅ no failing checks" : "\n❌ failing checks — the system will refuse to start (orgnauts-human start)"); }
       process.exit(r.ok ? 0 : 1);
@@ -205,9 +241,15 @@ async function main(): Promise<void> {
     // eslint-disable-next-line no-fallthrough
     case "init": { ensureRuntimeDirs(p); const { errors } = tryLoadConfig(p); say(`runtime dirs ready in ${p.root}. Config: ${Object.keys(errors).length ? `${Object.keys(errors).length} file(s) need attention — run orgnauts-human setup` : "ok"}`); return; }
     case "setup": {
-      const answers = await askAll({ dev: a.str("dev"), preprod: a.str("preprod"), evidence: a.str("evidence"), readonlyUser: a.str("readonly-user"), tracker: a.str("tracker") as "jira" | "file" | undefined, projectKey: a.str("project"), jiraUrl: a.str("jira-url"), emails: a.list("emails").flatMap((x) => x.split(",")).filter(Boolean), tagField: a.str("tag-field"), slack: a.bool("slack") || undefined }, a.bool("non-interactive"));
+      // v0.3.0: prerequisites first, as a table, BEFORE any question. A missing Salesforce CLI stops here with the install line;
+      // a missing `claude` only warns (setup itself does not need it).
+      const quick = a.bool("quick");
+      const pf = await preflight({ p });
+      say(`prerequisites:\n${formatChecks(pf.checks)}\n`);
+      if (!pf.ok) fail(`setup stopped — ${pf.checks.filter((c) => c.level === "fail").map((c) => `${c.title}: ${c.detail}`).join("; ")}`);
+      const answers = await askAll({ dev: a.str("dev"), preprod: a.str("preprod"), evidence: a.str("evidence"), readonlyUser: a.str("readonly-user"), tracker: a.str("tracker") as TrackerAdapterName | undefined, mcpServer: a.str("mcp-server"), projectKey: a.str("project"), jiraUrl: a.str("jira-url"), emails: a.list("emails").flatMap((x) => x.split(",")).filter(Boolean), tagField: a.str("tag-field"), slack: a.bool("slack") || undefined }, a.bool("non-interactive"), { quick });
       const written = applyAnswers(answers, p);
-      say(`written: ${written.join(", ")}\n\nnext:\n  1. orgnauts-human org login --alias ${answers.dev} --keychain agent\n${answers.preprod ? `  2. orgnauts-human org login --alias ${answers.preprod} --keychain engine\n` : ""}${answers.evidence ? `  3. orgnauts-human org login --alias ${answers.evidence} --keychain agent   (READ-ONLY user)\n` : ""}  4. export ${loadConfig(p).safety.canary_recipient_env}=you@yourdomain  → orgnauts-human doctor --p1 --email-canary --hooks-latency\n  5. orgnauts-human orgmap build && orgnauts-human mirror refresh\n  6. review docs/org-map/CONVENTIONS.md → orgnauts-human conventions build --prefix <yourorg>\n  7. orgnauts-human start`);
+      say(`written: ${written.join(", ")}\n\nnext:\n${nextSteps(answers, loadConfig(p, { fresh: true }).safety.canary_recipient_env, quick)}`);
       return;
     }
     case "orgmap": { const r = await orgmapBuild({ objects: a.list("objects").flatMap((x) => x.split(",")).filter(Boolean), p, log: (s) => say(`· ${s}`) }); say(`org-map: ${r.objects.length} object page(s), ${r.dependencies} dependency edge(s), ${r.conventions_sampled} class(es) sampled → docs/org-map/`); for (const w of r.warnings) say(`⚠ ${w}`); return; }
@@ -245,14 +287,19 @@ async function main(): Promise<void> {
   deployed <KEY> --org preprod|production [--id 0Af…]
   parity <KEY> [--accept T:N,… | --accept-all] [--reason "…"]   preprod parity check (D-099); acceptance is recorded
   verify <KEY> [--remediation]
-  baseline decide <KEY> --keep-dev T:N --take-uat T:N --exclude T:N [--all-take-uat]
+  baseline decide <KEY> [--source ALIAS] --keep-dev T:N --take-uat T:N --exclude T:N [--all-take-uat]
+  autonomy show | autonomy set <agent> ask|auto|inherit   stop for /approve after an agent, or let it run (D-106)
   sync                                      config → agents/.mcp.json/policy/lessons skills
   org list | login --alias X --keychain agent|engine | add --alias X --role r | remove --alias X
   lessons review|approve|reject|promote|retire · feedback "text" · learn [--no-sync] · memory audit · rewards [--tokens]
   run <KEY> [--allow-oauth]                 pipeline mode (claude -p, API key)
   ui [--port N]                             local UI (127.0.0.1 + token)
-  doctor [--p1] [--email-canary] [--hooks-latency] [--fls] [--all]
-  canary [--org ALIAS] · init · setup [--non-interactive …] · orgmap [--objects Case,Account] · mirror · conventions --prefix org · golden list|add|score · status · version`);
+  doctor [--p1] [--email-canary] [--hooks-latency] [--fls] [--all] [--json]
+  doctor --preflight                        prerequisites only: node ≥ 20.10, sf, git, claude, python3/Playwright (optional)
+  setup --quick                             5 questions: dev sandbox, project key, test e-mails, tracker (mcp default), preprod
+  setup                                     full wizard (preprod, production read-only user, tracker, e-mails, tag field, Slack)
+        [--non-interactive --dev X --project PROJ --emails "a,b" --tracker mcp|jira|file --mcp-server atlassian --jira-url U --preprod Y]
+  canary [--org ALIAS] · init · orgmap [--objects Case,Account] · mirror · conventions --prefix org · golden list|add|score · status · version`);
   }
 }
 

@@ -20,8 +20,12 @@ export interface TicketAttachment {
 
 export interface TicketSnapshot {
   key: string;
-  tracker: "jira" | "file";
+  tracker: "jira" | "file" | "mcp";
   fetched_at: string;
+  /** D-105: true while the vault holds only a stub — the a1-intake agent must import the real ticket through the tracker MCP. */
+  pending_import?: boolean;
+  /** D-105: who produced this snapshot, e.g. "mcp:atlassian" or "inbox-file". */
+  imported_via?: string;
   title: string;
   description: string;         // plain text
   status?: string;
@@ -55,7 +59,7 @@ export interface SearchHit {
 }
 
 export interface TrackerAdapter {
-  readonly name: "jira" | "file";
+  readonly name: "jira" | "file" | "mcp";
   fetch(key: string): Promise<TicketSnapshot>;
   search(jql: string, max?: number): Promise<SearchHit[]>;
   /** cheap: only enough to compute raw_hash for change detection */

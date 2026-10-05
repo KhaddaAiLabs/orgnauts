@@ -27,7 +27,7 @@ jobs:
       - run: node scripts/hardcode-lint.mjs
       # settings.json hooks wired, marketplace pinned, agent frontmatter valid
       - run: node scripts/repo-checks.mjs
-      # CI runners are slower than laptops (local default budget is 1500 ms)
+      # CI runners are slower than laptops (local default budget is 2500 ms)
       - run: node scripts/hooks-latency.mjs
         env:
           ORGNAUTS_HOOK_BUDGET_MS: "3000"

@@ -30,7 +30,9 @@ You write the words a human will send. You never send them. Drafts only, in `wor
 - `10-comms/internal-summary.md` — `audience: internal`. For the team: root cause in one paragraph, components, tests,
   deploy plan pointer, remediation owner, risks/unknowns, follow-ups.
 - `10-comms/tracker-comment.md` — `audience: internal`. A comment the human may paste into the ticket: status, evidence
-  paths, next step. (Posting is disabled by design — `config/tracker.yaml → post_draft: disabled`.)
+  paths, next step. (Posting is disabled by design — `config/tracker.yaml → post_draft: disabled`. The tracker is reached only
+  through its MCP server, only by a1-intake, only with read tools; the `tracker-guard` hook denies every write tool, D-105.
+  You have no tracker tool at all.)
 - `10-comms/README.md` + `10-comms/index.json` (`drafts[] {file, audience, purpose}`, `sources[]`).
 
 ## Rules

@@ -44,10 +44,35 @@ public inherited sharing virtual class TriggerHandler {
 Handlers pass `Trigger.new` / `Trigger.oldMap` into **service** methods that take collections; services own the logic and are
 unit-testable without DML where possible.
 
-## Order-of-execution notes the plan must state
-before-save flows → before triggers → system validation + validation rules → duplicate rules → after-save flows/processes →
-after triggers → assignment/auto-response/workflow → escalation rules → roll-up summary → post-commit (email, async).
-A change that moves logic between these layers is a design decision — write it in `03-plan.md §3` with the reason.
+## Order of execution the plan must state
+Taken from the Apex Developer Guide, "Triggers and Order of Execution". **Verify against `knowledge/mirror/` when it is populated
+and cite the line (`source: L2`)**; until then this list is the working reference and any step you rely on is marked "unverified".
+
+1. The record is loaded or initialised with the request's values. For a request from a standard UI page, system validation
+   for the page runs first (layout-required fields, field formats, maximum lengths).
+2. **Before-save record-triggered flows** run.
+3. **Before triggers** run.
+4. System validation runs again (required fields, field formats, foreign keys), then **custom validation rules**.
+5. **Duplicate rules** run.
+6. The record is **saved to the database, but not committed**.
+7. **After triggers** run.
+8. **Assignment rules** run.
+9. **Auto-response rules** run.
+10. **Workflow rules** run. A workflow field update re-runs the before-update and after-update triggers **once more**
+    (and system validation again), but not the before-save flows, duplicate rules or the earlier steps.
+11. **Escalation rules** run.
+12. **Processes and flows launched by workflow** (flow trigger workflow actions) run.
+13. **After-save record-triggered flows** run.
+14. **Entitlement rules** run.
+15. **Roll-up summary** fields on the parent record are recalculated and the parent is saved (the parent goes through its own save).
+16. The same for the **grandparent** record when it carries roll-ups.
+17. **Criteria-based sharing** is evaluated.
+18. All DML is **committed** to the database.
+19. **Post-commit logic** runs: email is sent, enqueued async Apex (Queueable, @future, Batch) and asynchronous flow paths start.
+
+A change that moves logic between these layers is a design decision — write it in `03-plan.md §3` with the reason, and show the
+record's path before and after in §3a. Two consequences worth stating every time: a before-save flow cannot see what an after
+trigger will do, and anything after step 18 (email, async) runs only if the whole transaction commits.
 
 ## Recursion & re-entry
 - Static `Set<Id>` of processed records per context; clear only in tests.

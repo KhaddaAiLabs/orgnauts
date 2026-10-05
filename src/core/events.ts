@@ -22,7 +22,8 @@ export type EventType =
   | "uat.parity_ok" | "uat.parity_failed" | "human.parity_accepted"
   | "budget.exceeded" | "tokens.recorded" | "test.run"
   | "lesson.candidate" | "lesson.approved" | "lesson.rejected" | "lesson.promoted" | "lesson.retired" | "lesson.reverted"
-  | "resume.classified" | "tracker.changed";
+  | "resume.classified" | "tracker.changed"
+  | "ticket.imported";
 
 export interface SfEvent {
   ts: string;

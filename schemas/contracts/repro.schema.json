@@ -114,6 +114,41 @@
         "$ref": "#/$defs/evidence"
       },
       "minItems": 1
+    },
+    "system_walkthrough": {
+      "type": "array",
+      "description": "D-112: how the system works today, step by step, and where it breaks \u2014 so the architect, developer and QA share one picture.",
+      "items": {
+        "type": "object",
+        "required": [
+          "step",
+          "component",
+          "what_happens"
+        ],
+        "properties": {
+          "step": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "component": {
+            "type": "string"
+          },
+          "what_happens": {
+            "type": "string",
+            "minLength": 5
+          },
+          "breaks_here": {
+            "type": "boolean"
+          },
+          "evidence": {
+            "$ref": "#/$defs/evidence"
+          }
+        }
+      }
+    },
+    "background": {
+      "type": "string",
+      "description": "ENHANCEMENT: what exists today around the new behaviour (components, data shapes, users) \u2014 nothing to reproduce, everything to understand."
     }
   },
   "additionalProperties": true,
