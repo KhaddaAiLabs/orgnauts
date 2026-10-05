@@ -65,6 +65,12 @@ safety model changed direction; everything about *using* it got simpler.
   via `FlowDefinition.activeVersionNumber`, not a deployed `Obsolete` status; `WITH USER_MODE` over
   `WITH SECURITY_ENFORCED`. New checklists: deployment, limits, sharing, test data.
 
+### CI
+- `.gitleaks.toml` extends the default gitleaks rules with one allowlist: the Atlassian MCP READ tool names
+  (`searchJiraIssuesUsingJql`, …) are 24 alphanumeric characters after the word "Jira", which the
+  `atlassian-api-token` rule in gitleaks 8.24.3 (the version gitleaks-action pins) reports as a token. No rule is
+  weakened; real tokens still live only in environment variables.
+
 ### Documentation rewritten for a first-time reader
 - The README is now a ten-minute tour with diagrams: what it is, how a ticket flows, the team, what you get per ticket,
   setup, daily use, where things live, safety. New `docs/README.md` (reading order by role) and `docs/FILE-GUIDE.md`
